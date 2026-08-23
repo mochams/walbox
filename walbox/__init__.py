@@ -2,6 +2,7 @@
 
 from walbox.abc import ChangeEvent
 from walbox.abc import ChangeKind
+from walbox.abc import CheckpointHandle
 from walbox.abc import CheckpointStore
 from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
@@ -13,6 +14,7 @@ from walbox.errors import WalboxError
 __all__ = [
     "ChangeEvent",
     "ChangeKind",
+    "CheckpointHandle",
     "CheckpointStore",
     "FileCheckpointStore",
     "PostgresCheckpointStore",

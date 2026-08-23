@@ -56,6 +56,12 @@ design decisions behind each feature as it stands today.
   TLS-specific integration test: the direct regression test for the reason
   Replication Transport ([RFC 04](docs/rfc-04-replication-transport.md)) is built
   the way it is.
+- **`psycopg-pool`** (dev-only), to prove `PostgresCheckpointStore.from_pool`
+  ([RFC 01](docs/rfc-01-checkpoint-store.md)) against a real
+  `psycopg_pool.AsyncConnectionPool`, not just a hand-rolled test double. walbox
+  itself never imports it: `from_pool` accepts anything structurally shaped like a
+  pool, so this dependency only exists to verify that the real package satisfies
+  that shape.
 
 ## Development methodology
 

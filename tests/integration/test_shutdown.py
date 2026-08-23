@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 from psycopg import AsyncConnection
 
+from walbox.abc import CheckpointHandle
 from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
 from walbox.checkpoint import FileCheckpointStore
@@ -119,7 +120,7 @@ async def test_sigterm_while_receiving(postgres_dsn, outbox_table, tmp_path):
     )
     delivered: list[Transaction] = []
 
-    async def handler(transaction: Transaction) -> None:
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         delivered.append(transaction)
 
     run_task = asyncio.ensure_future(client.run(handler))
@@ -163,11 +164,12 @@ async def test_sigterm_while_processing_a_transaction(
     side_effects: list[str] = []
     processed_lsn: list[int] = []
 
-    async def handler(transaction: Transaction) -> None:
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         started.set()
         await release.wait()
         side_effects.append(_entity_id(transaction))
         processed_lsn.append(transaction.commit_lsn)
+        await checkpoint.save(transaction.commit_lsn)
 
     run_task = asyncio.ensure_future(client.run(handler))
     try:
@@ -211,11 +213,12 @@ async def test_sigterm_under_backpressure(postgres_dsn, outbox_table, tmp_path):
     processed: list[str] = []
     processed_lsn: list[int] = []
 
-    async def handler(transaction: Transaction) -> None:
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         started.set()
         await release.wait()
         processed.append(_entity_id(transaction))
         processed_lsn.append(transaction.commit_lsn)
+        await checkpoint.save(transaction.commit_lsn)
 
     run_task = asyncio.ensure_future(client.run(handler))
     total_rows = (
@@ -246,7 +249,9 @@ async def test_sigterm_under_backpressure(postgres_dsn, outbox_table, tmp_path):
     # fresh client against the same slot and checkpoint store redelivers it.
     redelivered: list[str] = []
 
-    async def redeliver_handler(transaction: Transaction) -> None:
+    async def redeliver_handler(
+        transaction: Transaction, checkpoint: CheckpointHandle
+    ) -> None:
         redelivered.append(_entity_id(transaction))
 
     fresh_client = ReplicationClient(_options(postgres_dsn, slot_name, checkpoint_path))

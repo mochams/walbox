@@ -23,6 +23,7 @@ import signal
 from typing import Any
 
 from walbox import ChangeKind
+from walbox import CheckpointHandle
 from walbox import PostgresCheckpointStore
 from walbox import ReplicationClient
 from walbox import ReplicationOptions
@@ -37,14 +38,14 @@ async def publish_to_broker(payload: dict[str, Any]) -> None:
     logger.info("publishing: %s", payload)
 
 
-async def handle(tx: Transaction) -> None:
+async def handle(tx: Transaction, checkpoint: CheckpointHandle) -> None:
     """Publish each outbox insert, then durably checkpoint the transaction.
 
     `publish_to_broker` may be retried on redelivery after a crash (see
     README.md's failure-semantics table), so a real broker publish should
     dedupe on `payload["id"]`, the outbox row's natural event ID.
 
-    `tx.checkpoint.save(tx.commit_lsn)` below is called with no `connection=`,
+    `checkpoint.save(tx.commit_lsn)` below is called with no `connection=`,
     so it always opens its own connection and commits immediately (see
     `PostgresCheckpointStore.save`) -- it can never be atomic with anything
     else this handler does. That's fine here because the broker is an
@@ -60,7 +61,7 @@ async def handle(tx: Transaction) -> None:
 
         await publish_to_broker(change.new)
 
-    await tx.checkpoint.save(tx.commit_lsn)
+    await checkpoint.save(tx.commit_lsn)
 
 
 async def main() -> None:
@@ -74,7 +75,6 @@ async def main() -> None:
         slot_name="outbox_slot",
         publication_name="walbox_pub",
         checkpoint_store=checkpoint_store,
-        manage_checkpoint=False,  # handle() checkpoints explicitly, after publishing.
     )
     client = ReplicationClient(options)
 

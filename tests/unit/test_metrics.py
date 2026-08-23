@@ -6,6 +6,7 @@ than assembled from a real wire stream, and `_handle_xlog_data`/
 values.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from dataclasses import field
@@ -13,6 +14,7 @@ from unittest.mock import AsyncMock
 
 from walbox.abc import ChangeEvent
 from walbox.abc import ChangeKind
+from walbox.abc import CheckpointHandle
 from walbox.abc import Metrics
 from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
@@ -36,12 +38,12 @@ class _FakeCheckpointStore:
 
 
 def _options(**kwargs: object) -> ReplicationOptions:
+    kwargs.setdefault("checkpoint_store", _FakeCheckpointStore())
     return ReplicationOptions(
         consumer_name="test-consumer",
         dsn="postgresql://example",
         slot_name="test_slot",
         publication_name="test_pub",
-        checkpoint_store=_FakeCheckpointStore(),
         **kwargs,
     )
 
@@ -72,7 +74,9 @@ def _type_payload(
 async def test_metrics_callback_invoked_with_current_counters():
     recorded: list[Metrics] = []
     client = ReplicationClient(_options(on_metrics=recorded.append))
-    handler = AsyncMock()
+
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
+        await checkpoint.save(transaction.commit_lsn)
 
     await client._process(_transaction(xid=1, commit_lsn=100, n_changes=2), handler)
     await client._process(_transaction(xid=2, commit_lsn=200, n_changes=3), handler)
@@ -83,6 +87,35 @@ async def test_metrics_callback_invoked_with_current_counters():
     assert metrics.transactions_processed == 2
     assert metrics.changes_processed == 5
     assert metrics.checkpoint_lsn == 200
+
+
+async def test_checkpoint_latency_reflects_the_handler_calling_save():
+    @dataclass
+    class _SlowCheckpointStore:
+        async def load(self) -> int | None:
+            return None
+
+        async def save(self, lsn: int, *, connection: object | None = None) -> None:
+            await asyncio.sleep(0.05)
+
+    client = ReplicationClient(_options(checkpoint_store=_SlowCheckpointStore()))
+    assert client._current_metrics().last_checkpoint_latency_seconds == 0.0
+
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
+        await checkpoint.save(transaction.commit_lsn)
+
+    await client._process(_transaction(xid=1, commit_lsn=100), handler)
+
+    assert client._current_metrics().last_checkpoint_latency_seconds >= 0.05
+
+
+async def test_checkpoint_latency_stays_at_zero_if_the_handler_never_saves():
+    client = ReplicationClient(_options())
+    handler = AsyncMock()
+
+    await client._process(_transaction(xid=1, commit_lsn=100), handler)
+
+    assert client._current_metrics().last_checkpoint_latency_seconds == 0.0
 
 
 async def test_metrics_callback_exception_is_caught_and_logged(caplog):

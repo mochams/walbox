@@ -37,6 +37,7 @@ import signal
 import psycopg
 
 from walbox import ChangeKind
+from walbox import CheckpointHandle
 from walbox import PostgresCheckpointStore
 from walbox import ReplicationClient
 from walbox import ReplicationOptions
@@ -45,7 +46,12 @@ from walbox import Transaction
 logger = logging.getLogger("walbox.examples.outbox_postgres")
 
 
-async def handle_with_atomic_checkpoint(tx: Transaction, dsn: str) -> None:
+async def handle(
+    tx: Transaction,
+    checkpoint: CheckpointHandle,
+    *,
+    dsn: str,
+) -> None:
     """Write to `outbox_projection` and checkpoint in one Postgres commit.
 
     `PostgresCheckpointStore.save` only skips committing when it's given a
@@ -77,7 +83,7 @@ async def handle_with_atomic_checkpoint(tx: Transaction, dsn: str) -> None:
                 ),
             )
 
-        await tx.checkpoint.save(tx.commit_lsn, connection=conn)
+        await checkpoint.save(tx.commit_lsn, connection=conn)
         await conn.commit()
 
 
@@ -92,7 +98,6 @@ async def main() -> None:
         slot_name="outbox_slot",
         publication_name="walbox_pub",
         checkpoint_store=checkpoint_store,
-        manage_checkpoint=False,  # handler checkpoints explicitly, atomically.
     )
     client = ReplicationClient(options)
 
@@ -100,7 +105,7 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, client.close)
 
-    await client.run(functools.partial(handle_with_atomic_checkpoint, dsn=dsn))
+    await client.run(functools.partial(handle, dsn=dsn))
 
 
 if __name__ == "__main__":

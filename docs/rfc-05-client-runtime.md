@@ -52,8 +52,8 @@ premature acknowledgment) hold regardless of exactly when any of that happens.
   `wal_sender_timeout`, and additionally send proactive, periodic status updates so
   silence never exceeds a configured interval even between keepalives.
 - Report flushed/applied progress that only ever reflects what's *actually*
-  durably checkpointed, via both the client's own auto-checkpoint path and an
-  application calling `tx.checkpoint.save(...)` directly.
+  durably checkpointed -- advanced solely by the application calling
+  `checkpoint.save(...)` itself; walbox never checkpoints on a handler's behalf.
 - On a lost connection, reconnect with exponential backoff, always re-reading the
   current durable checkpoint on every attempt (which may have advanced since the
   last attempt).
@@ -63,6 +63,17 @@ premature acknowledgment) hold regardless of exactly when any of that happens.
   with no exception raised.
 
 **Non-Goals:**
+- No auto-checkpoint mode: no option lets the client call `checkpoint.save(...)` on
+  a handler's behalf right after it returns without raising. Considered and
+  rejected: it's structurally incompatible with the same-transaction pattern
+  (Checkpoint Store, RFC 01) -- an automatic call can never know about a connection
+  the handler opened, so it could only ever call `save()` with no `connection=` --
+  and for the cases it *could* support, it would save exactly one line
+  (`await checkpoint.save(tx.commit_lsn)`) at the cost of treating "the handler's
+  coroutine returned" as equivalent to "the handler's work durably finished," which
+  isn't a safe assumption in general (a handler that fires a downstream call
+  without awaiting or checking it, for instance). Every handler is unconditionally
+  responsible for calling `checkpoint.save(...)` itself.
 - No decoding of pgoutput messages, or assembly of raw messages into transactions.
   This feature just calls into Wire Decoding (RFC 02) and Transaction Assembly
   (RFC 03).
@@ -156,10 +167,9 @@ to every `CheckpointHandle` (Checkpoint Store, RFC 01), invoked *after* the
 underlying `store.save(...)` call has already completed. This is the load-bearing
 correctness property of the whole feature: there is no code path that lets a status
 update report a position PostgreSQL wasn't already durably told about locally,
-first. Because the callback fires from `CheckpointHandle.save` itself rather than
-from client code specific to one mode, both `manage_checkpoint=True`'s automatic
-save and an application's own `manage_checkpoint=False` manual save advance the same
-tracked value identically, with no special-casing per mode.
+first. Because the callback fires from `CheckpointHandle.save` itself, wherever in
+the application's handler that call happens to live, feedback tracks reality with no
+client-side special-casing at all -- there's exactly one way progress ever advances.
 
 Status updates are sent both reactively (a keepalive with `reply_requested=True`)
 and proactively, on a timer, so PostgreSQL never sees silence longer than
@@ -261,11 +271,10 @@ feedback isn't actually expected or required. The client just reconnects instead
   calls `save()` with a smaller value than already recorded) and only advances
   *after* the underlying checkpoint save has genuinely completed, proven by
   checking call order, not just the end state.
-- Both `manage_checkpoint=True`'s automatic save and an application's own manual
-  `manage_checkpoint=False` save advance reported feedback identically; a
-  `manage_checkpoint=False` application that never calls `save()` at all leaves
-  feedback pinned at the startup floor indefinitely, proving feedback genuinely
-  tracks checkpoint state rather than transaction-processing activity.
+- A handler that calls `checkpoint.save(...)` itself advances reported feedback to
+  match; a handler that never calls it at all leaves feedback pinned at the startup
+  floor indefinitely, proving feedback genuinely tracks checkpoint state rather than
+  transaction-processing activity, and that the client never advances it on its own.
 - A dropped connection retries with doubling backoff and eventually succeeds,
   resuming correctly; a non-connection error (a decode failure, a handler
   exception) is never retried and propagates immediately, with no reconnect attempt

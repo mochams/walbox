@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from psycopg import AsyncConnection
 
+from walbox.abc import CheckpointHandle
 from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
 from walbox.checkpoint import FileCheckpointStore
@@ -37,20 +38,23 @@ def _insert_row(entity_id: str) -> str:
 
 @dataclass
 class _RecordingHandler:
-    """Collects delivered `Transaction`s in the order the handler saw them."""
+    """Collects delivered `Transaction`s in the order the handler saw them,
+    checkpointing each one immediately after recording it.
+    """
 
     transactions: list[Transaction] = field(default_factory=list)
 
-    async def __call__(self, transaction: Transaction) -> None:
+    async def __call__(
+        self, transaction: Transaction, checkpoint: CheckpointHandle
+    ) -> None:
         self.transactions.append(transaction)
+        await checkpoint.save(transaction.commit_lsn)
 
 
 def _options(
     postgres_dsn: str,
     slot_name: str,
     checkpoint_path: Path,
-    *,
-    manage_checkpoint: bool = True,
 ) -> ReplicationOptions:
     return ReplicationOptions(
         consumer_name="test-consumer",
@@ -58,7 +62,6 @@ def _options(
         slot_name=slot_name,
         publication_name="walbox_pub",
         checkpoint_store=FileCheckpointStore(checkpoint_path),
-        manage_checkpoint=manage_checkpoint,
     )
 
 
@@ -157,21 +160,16 @@ async def test_crash_before_checkpoint_redelivers_the_same_transaction(
     slot_name = _unique_slot_name()
     deliveries: list[Transaction] = []
 
-    async def handler(transaction: Transaction) -> None:
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         if len(deliveries) == 1:
             # Second delivery (the redelivery): save before recording it, so
             # a test waiting on `deliveries` reaching length 2 never
             # observes this delivery before the checkpoint is durable.
-            await transaction.checkpoint.save(transaction.commit_lsn)
+            await checkpoint.save(transaction.commit_lsn)
         deliveries.append(transaction)
 
     client = ReplicationClient(
-        _options(
-            postgres_dsn,
-            slot_name,
-            tmp_path / "checkpoint",
-            manage_checkpoint=False,
-        )
+        _options(postgres_dsn, slot_name, tmp_path / "checkpoint")
     )
     running = _RunningClient(client, handler)
     try:

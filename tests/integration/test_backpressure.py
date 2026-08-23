@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock
 import pytest
 from psycopg import AsyncConnection
 
+from walbox.abc import CheckpointHandle
 from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
 from walbox.checkpoint import FileCheckpointStore
@@ -135,7 +136,7 @@ async def test_bounded_queue_keeps_memory_bounded_under_a_slow_handler(
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def handler(transaction: Transaction) -> None:
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         started.set()
         await release.wait()
 
@@ -170,7 +171,7 @@ async def test_feedback_does_not_advance_while_backpressured(
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def handler(transaction: Transaction) -> None:
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         started.set()
         await release.wait()
 
@@ -220,7 +221,7 @@ async def test_replication_lag_grows_instead_of_the_process_buffering_unboundedl
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def handler(transaction: Transaction) -> None:
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         started.set()
         await release.wait()
 

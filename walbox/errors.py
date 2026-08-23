@@ -12,7 +12,7 @@ from dataclasses import dataclass
 class ErrorContext:
     """Immutable bundle of replication context fields, all optional.
 
-    No single error site knows every field — a lower layer raises with what
+    No single error site knows every field, a lower layer raises with what
     it knows and a higher layer fills in the rest via `WalboxError.enrich`.
     """
 
@@ -65,7 +65,7 @@ class WalboxError(Exception):
         """Merge additional context in place as the exception propagates.
 
         Layers that know more than the original raise site did add to the
-        context as it crosses boundaries — e.g. protocol.py raises a
+        context as it crosses boundaries, e.g. protocol.py raises a
         DecodeError knowing only the message type, and transaction.py adds
         the xid before letting it propagate further. Only non-None arguments
         overwrite; fields already set are preserved unless explicitly
@@ -73,15 +73,15 @@ class WalboxError(Exception):
         """
         self.context = ErrorContext(
             slot=slot if slot is not None else self.context.slot,
-            publication=publication
-            if publication is not None
-            else self.context.publication,
+            publication=(
+                publication if publication is not None else self.context.publication
+            ),
             lsn=lsn if lsn is not None else self.context.lsn,
             xid=xid if xid is not None else self.context.xid,
             relation=relation if relation is not None else self.context.relation,
-            message_type=message_type
-            if message_type is not None
-            else self.context.message_type,
+            message_type=(
+                message_type if message_type is not None else self.context.message_type
+            ),
         )
 
     def __str__(self) -> str:

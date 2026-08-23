@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from walbox.abc import CheckpointHandle
 from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
 from walbox.client import ReplicationClient
@@ -215,10 +216,11 @@ async def test_in_flight_handler_completes_and_checkpoints_before_run_returns():
     release = asyncio.Event()
     side_effects: list[int] = []
 
-    async def handler(transaction: Transaction) -> None:
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         started.set()
         await release.wait()
         side_effects.append(transaction.xid)
+        await checkpoint.save(transaction.commit_lsn)
 
     run_task = asyncio.ensure_future(client.run(handler))
     await asyncio.wait_for(started.wait(), timeout=1.0)

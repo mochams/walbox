@@ -2,7 +2,8 @@
 
 Exercises the periodic status-update timer and the durable-progress hook
 together: the flush/applied position reported to PostgreSQL must track the
-actual durable checkpoint, under both `manage_checkpoint` modes, and a
+actual durable checkpoint -- advanced only by the handler calling
+`checkpoint.save(...)` itself, walbox has no auto-checkpoint mode -- and a
 handler that never checkpoints must never advance the reported floor.
 """
 
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock
 import pytest
 from psycopg import AsyncConnection
 
+from walbox.abc import CheckpointHandle
 from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
 from walbox.checkpoint import FileCheckpointStore
@@ -122,7 +124,7 @@ async def test_periodic_status_update_is_sent_without_any_transaction_activity(
 
 
 @pytest.mark.timeout(30)
-async def test_feedback_reflects_the_checkpoint_after_manage_checkpoint_true_save(
+async def test_feedback_reflects_the_checkpoint_after_a_manual_save(
     postgres_dsn, outbox_table, tmp_path: Path
 ):
     checkpoint_store = FileCheckpointStore(tmp_path / "checkpoint")
@@ -133,77 +135,13 @@ async def test_feedback_reflects_the_checkpoint_after_manage_checkpoint_true_sav
         slot_name=slot_name,
         publication_name="walbox_pub",
         checkpoint_store=checkpoint_store,
-        manage_checkpoint=True,
-        status_interval=_STATUS_INTERVAL,
-    )
-    client = ReplicationClient(options)
-    seen: list[Transaction] = []
-
-    async def handler(transaction: Transaction) -> None:
-        seen.append(transaction)
-
-    write_calls: list[bytes] = []
-    original_new_transport = client._new_transport
-
-    def _spying_new_transport():
-        transport = original_new_transport()
-        original_write = transport.write
-
-        async def _spying_write(payload: bytes) -> None:
-            write_calls.append(payload)
-            await original_write(payload)
-
-        transport.write = AsyncMock(side_effect=_spying_write)
-        return transport
-
-    client._new_transport = _spying_new_transport
-    running = _RunningClient(client, handler)
-    try:
-        await _wait_slot_active(postgres_dsn, slot_name)
-
-        async with await AsyncConnection.connect(postgres_dsn, autocommit=True) as conn:
-            await conn.execute(
-                "INSERT INTO outbox (entity_type, entity_id, event_type, payload) "
-                "VALUES ('user', 'user-1', 'user_created', '{}'::jsonb)",
-            )
-
-        async def _poll() -> None:
-            while not seen:
-                await asyncio.sleep(0.05)
-
-        await asyncio.wait_for(_poll(), timeout=5.0)
-        commit_lsn = seen[0].commit_lsn
-
-        write_calls.clear()
-        await asyncio.sleep(_STATUS_INTERVAL + 1)
-        running.raise_if_failed()
-        assert write_calls
-        assert _decode_flushed_lsn(write_calls[-1]) == commit_lsn
-    finally:
-        await running.stop()
-
-
-@pytest.mark.timeout(30)
-async def test_feedback_reflects_the_checkpoint_after_a_manual_save_under_manage_checkpoint_false(
-    postgres_dsn, outbox_table, tmp_path: Path
-):
-    checkpoint_store = FileCheckpointStore(tmp_path / "checkpoint")
-    slot_name = _unique_slot_name()
-    options = ReplicationOptions(
-        consumer_name="test-consumer",
-        dsn=postgres_dsn,
-        slot_name=slot_name,
-        publication_name="walbox_pub",
-        checkpoint_store=checkpoint_store,
-        manage_checkpoint=False,
         status_interval=_STATUS_INTERVAL,
     )
     client = ReplicationClient(options)
     saved: list[int] = []
 
-    async def handler(transaction: Transaction) -> None:
-        assert transaction.checkpoint is not None
-        await transaction.checkpoint.save(transaction.commit_lsn)
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
+        await checkpoint.save(transaction.commit_lsn)
         saved.append(transaction.commit_lsn)
 
     write_calls: list[bytes] = []
@@ -258,13 +196,12 @@ async def test_feedback_stays_at_the_floor_when_the_handler_never_saves(
         slot_name=slot_name,
         publication_name="walbox_pub",
         checkpoint_store=checkpoint_store,
-        manage_checkpoint=False,
         status_interval=_STATUS_INTERVAL,
     )
     client = ReplicationClient(options)
     seen: list[Transaction] = []
 
-    async def handler(transaction: Transaction) -> None:
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         seen.append(transaction)
 
     write_calls: list[bytes] = []
