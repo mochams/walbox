@@ -1,0 +1,200 @@
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "walbox"
+version = "0.1.0"
+description = "Async PostgreSQL logical-replication runtime for the transactional outbox pattern"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Mochama Adriano" }]
+keywords = [
+    "postgresql",
+    "logical-replication",
+    "outbox",
+    "asyncio",
+    "cdc",
+    "change-data-capture",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: AsyncIO",
+    "Topic :: Database",
+    "Typing :: Typed",
+]
+dependencies = ["psycopg>=3.2"]
+
+[project.urls]
+Homepage = "https://github.com/mochams/walbox"
+Repository = "https://github.com/mochams/walbox"
+Issues = "https://github.com/mochams/walbox/issues"
+Author = "https://github.com/mochams"
+
+
+[dependency-groups]
+dev = [
+    "cryptography>=50.0.0",
+    "prek>=0.4.13",
+    "psycopg[binary]>=3.2",
+    "pyrefly>=1.2.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "pytest-timeout>=2.4.0",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.16.1",
+    "testcontainers[postgres]>=4.9",
+]
+
+[tool.uv.build-backend]
+module-name = "walbox"
+module-root = "."
+
+
+# ==== Ruff ====
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+extend-exclude = ["docs"]
+
+# Python line length and indent width
+line-length = 88
+indent-width = 4
+
+# Assume Python 3.13
+target-version = "py313"
+
+[tool.ruff.lint]
+# Enable opt-in preview mode
+preview = true
+
+# Enable rules
+select = ['ALL']
+ignore = [
+    "assert",                                           # Use of assert detected https://docs.astral.sh/ruff/rules/assert/
+    "mutable-class-default",                            # Mutable class attributes should be annotated with `typing.ClassVar`
+    "collapsible-if",                                   # Sometimes it's better to nest
+    "missing-copyright-notice",                         # Copyright
+    "missing-return-type-undocumented-public-function", # Return type annotation
+    "missing-return-type-private-function",             # Return type annotation (private)
+    "no-self-use",                                      # Sometimes it is possible i.e interface methods
+    "unused-method-argument",                           # Sometimes it is possible i.e interface methods
+    "undefined-local-with-import-star-usage",
+    "class-as-data-structure",
+]
+
+# Exclude for tests
+exclude = ["tests/*.py"]
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.format]
+# Enable opt-in preview mode
+preview = true
+
+# Ignore
+exclude = ["COM812", "ISC001"]
+
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+# Enable auto-formatting of code examples in docstrings.
+docstring-code-format = true
+
+# Set the line length limit used when formatting code snippets in
+# docstrings.
+docstring-code-line-length = 88
+
+[tool.ruff.lint.isort]
+# Forces all from imports to appear on their own line.
+force-single-line = true
+
+# Sort imports in a case-sensitive manner.
+case-sensitive = true
+
+[tool.ruff.lint.pydocstyle]
+# Whether to use Google-style, NumPy-style conventions, or the PEP 257 default.
+convention = "google"
+
+[tool.ruff.lint.pylint]
+# Maximum number of arguments allowed for a function or method definition
+max-args = 7
+
+
+# === Pyrefly ===
+[tool.pyrefly]
+min-severity = "warn"
+project-excludes = ["tests", "docs", "examples"]
+
+
+# === Pytest ===
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = [
+    "--strict-markers",
+    "--cov=walbox",
+    "--cov=examples",
+    "--cov-fail-under=100",
+    "--cov-report=term-missing",
+    "--durations=10",
+    "--timeout=10",
+    "-n 0",
+]
+testpaths = ["tests"]
+markers = [
+    "postgres: requires a real PostgreSQL instance, started via testcontainers (make test-integration)",
+]
+log_cli = "false"
+log_cli_level = "ERROR"
+log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+
+
+# ==== Coverage ====
+[tool.coverage.run]
+branch = true
+disable_warnings = ["include-ignored", "no-data-collected"]
+
+parallel = true
+concurrency = ["multiprocessing", "thread"]
+
+[tool.coverage.report]
+exclude_also = [
+    # Don't complain about missing debug-only code:
+    "def __repr__",
+    "def __str__",
+    "if self\\.debug",
+    # Don't complain if tests don't hit defensive assertion code:
+    "raise AssertionError",
+    "raise NotImplementedError",
+    # Don't complain if non-runnable code isn't run:
+    "if 0:",
+    "if __name__ == .__main__.:",
+    # Don't complain about abstract methods, they aren't run:
+    "@(abc\\.)?abstractmethod",
+    # Exclude protocol methods implementations i.e '...', they aren't run:
+    "^\\s*\\.\\.\\.$",
+    # Exclude TYPE_CHECKING blocks
+    "if TYPE_CHECKING:",
+]
+skip_covered = "true"

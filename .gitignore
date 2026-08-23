@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.ruff_cache/
+.pytest_cache/
+
+# Virtual environments
+.venv
+
+# Environment variables
+.env
+env.sh
+
+# Test
+.coverage*
+coverage/
+
+# Local setup and PoCs
+lab/

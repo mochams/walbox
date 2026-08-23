@@ -1,0 +1,12 @@
+name: CI
+
+on:
+  push:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qa:
+    uses: ./.github/workflows/qa.yml
