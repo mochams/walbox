@@ -267,19 +267,38 @@ class ReplicationClient:
                 operations raise, so callers handle both identically.
         """
         task = asyncio.ensure_future(awaitable)
-        while True:
-            timeout = max(self._next_status_at - time.monotonic(), 0)
-            done, _pending = await asyncio.wait({task}, timeout=timeout)
-            if task in done:
-                return task.result()
-            if self._closing.is_set():
+        try:
+            while True:
+                timeout = max(self._next_status_at - time.monotonic(), 0)
+                done, _pending = await asyncio.wait({task}, timeout=timeout)
+                if task in done:
+                    return task.result()
+                if self._closing.is_set():
+                    raise asyncio.QueueShutDown
+                await self._send_status_update(reply_requested=False)
+                await self._maybe_report_metrics()
+                self._next_status_at = time.monotonic() + self.options.status_interval
+        finally:
+            # If we're leaving for any reason other than `task` itself having
+            # completed -- QueueShutDown above, or this coroutine being
+            # cancelled directly (e.g. a caller cancelling `run()`'s task
+            # instead of calling `close()`) -- `task` is still pending and
+            # must be cancelled and awaited here, not left to leak. Otherwise
+            # its `_wait_readable`/`_wait_writable` never reaches its own
+            # `finally` block, leaving a stale `loop.add_reader`/`add_writer`
+            # registration on a file descriptor that can be silently reused
+            # by a later connection once this one closes -- reproducible in
+            # a real crash, but only on epoll (Linux): closing a socket
+            # implicitly drops it from epoll at the kernel level while the
+            # selector's own bookkeeping doesn't know that happened, so the
+            # next connection to reuse that fd number collides with a stale
+            # entry (`FileNotFoundError` from `EpollSelector.modify`).
+            # kqueue (macOS) tolerates this, which is why it's invisible in
+            # local runs and only surfaces in Linux CI.
+            if not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
-                raise asyncio.QueueShutDown
-            await self._send_status_update(reply_requested=False)
-            await self._maybe_report_metrics()
-            self._next_status_at = time.monotonic() + self.options.status_interval
 
     async def _enqueue(self, transaction: Transaction) -> None:
         try:

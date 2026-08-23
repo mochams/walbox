@@ -188,6 +188,39 @@ async def test_await_with_status_updates_never_duplicates_the_underlying_task():
     assert await asyncio.wait_for(task, timeout=1.0) == "done"
 
 
+async def test_await_with_status_updates_cancels_the_underlying_task_when_cancelled_externally():
+    """If the coroutine calling `_await_with_status_updates` is itself
+    cancelled -- e.g. an external `task.cancel()` on `run()`'s task, not
+    `close()` -- the inner task it created must be cancelled and awaited
+    too, never abandoned. An abandoned inner task means whatever it was
+    doing (e.g. `_wait_readable`'s `loop.add_reader`) never reaches its own
+    cleanup -- the exact leak that can crash a later, unrelated connection
+    reusing the same fd, on Linux/epoll.
+    """
+    client = ReplicationClient(_options(status_interval=1000))
+    client._transport = AsyncMock()
+    client._next_status_at = time.monotonic() + 1000
+
+    inner_cancelled = asyncio.Event()
+
+    async def _never_resolves() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            inner_cancelled.set()
+            raise
+
+    outer = asyncio.ensure_future(client._await_with_status_updates(_never_resolves()))
+    await asyncio.sleep(0)  # let it start and create the inner task
+    assert not outer.done()
+
+    outer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await outer
+
+    assert inner_cancelled.is_set()
+
+
 async def test_close_unblocks_a_receiver_blocked_on_a_full_queue():
     client = _client(max_pending_transactions=1)
     await client._enqueue(_transaction(xid=1))
