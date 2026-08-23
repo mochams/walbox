@@ -22,8 +22,6 @@ import os
 import signal
 from typing import Any
 
-import psycopg
-
 from walbox import ChangeKind
 from walbox import PostgresCheckpointStore
 from walbox import ReplicationClient
@@ -52,9 +50,9 @@ async def handle(tx: Transaction) -> None:
     else this handler does. That's fine here because the broker is an
     external system that could never share a Postgres transaction anyway, so
     redelivery-with-dedupe is the only available correctness strategy. When
-    the downstream write is itself Postgres, use
-    `handle_with_atomic_checkpoint` below instead, which gets real atomicity
-    by passing its own connection into `checkpoint.save`.
+    the downstream write is itself Postgres, see
+    [`outbox_postgres.py`](outbox_postgres.py) instead, which gets real
+    atomicity by passing its own connection into `checkpoint.save`.
     """
     for change in tx.changes:
         if change.table != "public.outbox" or change.kind != ChangeKind.INSERT:
@@ -63,47 +61,6 @@ async def handle(tx: Transaction) -> None:
         await publish_to_broker(change.new)
 
     await tx.checkpoint.save(tx.commit_lsn)
-
-
-async def handle_with_atomic_checkpoint(tx: Transaction, dsn: str) -> None:
-    """Commit a Postgres write and the checkpoint update atomically.
-
-    `PostgresCheckpointStore.save` only skips committing when it's given a
-    `connection=` -- pass one, and the upsert runs uncommitted on that
-    connection instead of on a throwaway one of its own. That's the *only*
-    way to get a downstream Postgres write and the checkpoint into the same
-    commit; `handle`'s plain `checkpoint.save(tx.commit_lsn)` call always
-    commits on its own separate connection and can't be made atomic with
-    anything else no matter what the handler does first.
-
-    This demonstrates the same-transaction pattern (README.md's
-    exactly-once-effects section): a handler's own downstream Postgres
-    write(s) and `checkpoint.save` share one connection and one commit, so a
-    crash between them is impossible -- either both happened, or neither
-    did. Reach for this shape instead of `handle`'s whenever "publish" means
-    writing to another table in this same database (e.g. a projection),
-    rather than an external broker -- only a Postgres write can share a
-    transaction with the checkpoint this way.
-
-    This example has no downstream write of its own -- add yours where
-    noted below, iterating `tx.changes` the same way `handle` does above,
-    e.g.:
-
-        await conn.execute("INSERT INTO projection (...) VALUES (...)", (...))
-
-    It must run on `conn`, uncommitted, so it becomes durable together with
-    the checkpoint below -- never on a separate connection or transaction.
-
-    Not wired into `main()` below. `client.run()` always calls its handler
-    with a single `Transaction` argument, so using this one instead of
-    `handle` means binding `dsn` first, e.g.:
-
-        await client.run(functools.partial(handle_with_atomic_checkpoint, dsn=dsn))
-    """
-    async with await psycopg.AsyncConnection.connect(dsn) as conn:
-        # Your own downstream write(s) go here.
-        await tx.checkpoint.save(tx.commit_lsn, connection=conn)
-        await conn.commit()
 
 
 async def main() -> None:
@@ -125,9 +82,8 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, client.close)
 
-    # Swap for handle_with_atomic_checkpoint (see its docstring) if your
-    # downstream write is itself Postgres and you want it committed
-    # atomically with the checkpoint.
+    # See outbox_postgres.py instead if your downstream write is itself
+    # Postgres and you want it committed atomically with the checkpoint.
     await client.run(handle)
 
 

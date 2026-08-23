@@ -75,9 +75,6 @@ async def test_save_with_connection_commits_atomically_with_caller_transaction(
     store = PostgresCheckpointStore(
         postgres_dsn, consumer_name=consumer_name, table=table
     )
-    # Ensure the checkpoint table exists before opening the caller's own
-    # transaction -- save(connection=...) never runs DDL itself.
-    await store.load()
 
     async with await AsyncConnection.connect(postgres_dsn) as conn:
         await conn.execute(f"INSERT INTO {table}_sink (value) VALUES ('sink-row')")
@@ -89,6 +86,29 @@ async def test_save_with_connection_commits_atomically_with_caller_transaction(
         row = await cursor.fetchone()
         assert row is not None
         assert row[0] == 1
+    assert await store.load() == 100
+
+
+async def test_save_with_connection_creates_the_table_on_first_use(
+    postgres_dsn: str,
+    table: str,
+) -> None:
+    """Regression test: `save(connection=...)` used to skip schema creation
+    entirely, so calling it as a store's very first operation (no prior
+    `load()` or connection-less `save()`) raised because the backing table
+    never existed. The `CREATE TABLE IF NOT EXISTS` it now runs is left
+    uncommitted, same as the upsert, so it only becomes durable once the
+    caller commits -- proven here by committing and then loading it back.
+    """
+    consumer_name = _unique_consumer_name()
+    store = PostgresCheckpointStore(
+        postgres_dsn, consumer_name=consumer_name, table=table
+    )
+
+    async with await AsyncConnection.connect(postgres_dsn) as conn:
+        await store.save(100, connection=conn)
+        await conn.commit()
+
     assert await store.load() == 100
 
 
