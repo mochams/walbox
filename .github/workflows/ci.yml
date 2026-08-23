@@ -2,6 +2,10 @@ name: CI
 
 on:
   push:
+    branches-ignore:
+      - "main"
+      - "dependabot*"
+      - "dependabot/**"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}

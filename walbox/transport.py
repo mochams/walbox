@@ -155,12 +155,24 @@ class ReplicationTransport:
             # waiting on write-ready alone can deadlock, so race both.
             readable = asyncio.ensure_future(self._wait_readable())
             writable = asyncio.ensure_future(self._wait_writable())
-            done, pending = await asyncio.wait(
-                {readable, writable},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
+            try:
+                done, _pending = await asyncio.wait(
+                    {readable, writable},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                # The loser of the race (or, if this coroutine itself gets
+                # cancelled here, both) must be cancelled *and awaited*, not
+                # just fired-and-forgotten -- otherwise its own
+                # `_wait_readable`/`_wait_writable` never reaches its
+                # `finally` and leaks a stale `loop.add_reader`/`add_writer`
+                # registration on this connection's fd, which can collide
+                # with a later, unrelated connection that happens to reuse
+                # the same fd number once this one closes.
+                for task in (readable, writable):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(readable, writable, return_exceptions=True)
             if readable in done:
                 pgconn.consume_input()
 

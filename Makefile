@@ -21,4 +21,4 @@ typecheck:
 	uv run pyrefly check
 
 run_precommit:
-	prek run --all-files
+	uv run prek run --all-files
