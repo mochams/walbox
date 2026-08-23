@@ -1,5 +1,6 @@
 """Shared data types and protocols for walbox."""
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field
@@ -55,10 +56,10 @@ class CheckpointStore(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CheckpointHandle:
-    """A `CheckpointStore` bound to one transaction, so a handler can call `save`."""
+    """A `CheckpointStore` bound to one run, handed to every handler call."""
 
     _store: CheckpointStore
-    _on_saved: Callable[[int], None] | None = None
+    _on_saved: Callable[[int, float], None] | None = None
 
     async def save(
         self,
@@ -74,9 +75,10 @@ class CheckpointHandle:
                 transaction for the underlying store to join, instead of
                 opening its own.
         """
+        started_at = time.monotonic()
         await self._store.save(lsn, connection=connection)
         if self._on_saved is not None:
-            self._on_saved(lsn)
+            self._on_saved(lsn, time.monotonic() - started_at)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +89,6 @@ class Transaction:
     commit_lsn: int
     commit_time: int
     changes: list[ChangeEvent] = field(default_factory=list)
-    checkpoint: CheckpointHandle | None = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,5 @@ class ReplicationOptions:
     checkpoint_store: CheckpointStore
 
     max_pending_transactions: int = 100
-    manage_checkpoint: bool = True
     status_interval: int = 10
     on_metrics: MetricsCallback | None = None

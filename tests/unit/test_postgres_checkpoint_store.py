@@ -42,6 +42,24 @@ class _FakeConnection:
         return False
 
 
+class _FakePool:
+    """A `ConnectionPool`-shaped double: `.connection()` hands out `conn`.
+
+    Structurally matches `psycopg_pool.AsyncConnectionPool` (a plain method
+    returning an async context manager) without depending on that package --
+    `_FakeConnection` already implements `__aenter__`/`__aexit__`, so it
+    doubles as its own "checked-out connection".
+    """
+
+    def __init__(self, conn: _FakeConnection) -> None:
+        self.conn = conn
+        self.checkout_count = 0
+
+    def connection(self) -> _FakeConnection:
+        self.checkout_count += 1
+        return self.conn
+
+
 def _create_table_calls(conn: _FakeConnection) -> list[str]:
     return [sql for sql in conn.executed if "CREATE TABLE" in sql]
 
@@ -69,6 +87,20 @@ async def test_load_returns_the_saved_lsn_when_a_row_exists(monkeypatch):
     store = PostgresCheckpointStore("dsn", consumer_name="consumer")
 
     assert await store.load() == 100
+
+
+async def test_load_commits_after_ensuring_the_schema(monkeypatch):
+    fake_conn = _FakeConnection(row=None)
+    monkeypatch.setattr(
+        psycopg.AsyncConnection,
+        "connect",
+        AsyncMock(return_value=fake_conn),
+    )
+    store = PostgresCheckpointStore("dsn", consumer_name="consumer")
+
+    await store.load()
+
+    assert fake_conn.committed == 1
 
 
 async def test_save_without_connection_opens_its_own_connection_and_commits(
@@ -156,3 +188,62 @@ async def test_ensure_schema_is_not_repeated_across_connection_and_own_connectio
 
     assert len(_create_table_calls(caller_conn)) == 1
     assert len(_create_table_calls(fake_conn)) == 0
+
+
+async def test_from_pool_load_uses_the_pool_instead_of_connecting(monkeypatch):
+    connect_mock = AsyncMock()
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", connect_mock)
+    fake_conn = _FakeConnection(row=(100,))
+    pool = _FakePool(fake_conn)
+    store = PostgresCheckpointStore.from_pool(pool, consumer_name="consumer")
+
+    assert await store.load() == 100
+
+    connect_mock.assert_not_called()
+    assert pool.checkout_count == 1
+    assert len(_create_table_calls(fake_conn)) == 1
+    assert fake_conn.committed == 1
+
+
+async def test_from_pool_save_without_connection_uses_the_pool_instead_of_connecting(
+    monkeypatch,
+):
+    connect_mock = AsyncMock()
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", connect_mock)
+    fake_conn = _FakeConnection()
+    pool = _FakePool(fake_conn)
+    store = PostgresCheckpointStore.from_pool(pool, consumer_name="consumer")
+
+    await store.save(100)
+
+    connect_mock.assert_not_called()
+    assert pool.checkout_count == 1
+    assert fake_conn.committed == 1
+    assert len(_create_table_calls(fake_conn)) == 1
+
+
+async def test_from_pool_save_with_connection_bypasses_the_pool_entirely(monkeypatch):
+    connect_mock = AsyncMock()
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", connect_mock)
+    pool = _FakePool(_FakeConnection())
+    store = PostgresCheckpointStore.from_pool(pool, consumer_name="consumer")
+    caller_conn = _FakeConnection()
+
+    await store.save(100, connection=caller_conn)
+
+    connect_mock.assert_not_called()
+    assert pool.checkout_count == 0
+    assert caller_conn.committed == 0
+    assert len(_create_table_calls(caller_conn)) == 1
+
+
+async def test_from_pool_reuses_the_pool_across_repeated_calls(monkeypatch):
+    fake_conn = _FakeConnection()
+    pool = _FakePool(fake_conn)
+    store = PostgresCheckpointStore.from_pool(pool, consumer_name="consumer")
+
+    await store.save(100)
+    await store.save(200)
+
+    assert pool.checkout_count == 2
+    assert len(_create_table_calls(fake_conn)) == 1  # schema ensured only once

@@ -18,6 +18,7 @@ import pytest
 from psycopg import AsyncConnection
 
 from walbox.abc import ChangeKind
+from walbox.abc import CheckpointHandle
 from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
 from walbox.client import ReplicationClient
@@ -48,7 +49,9 @@ class _RecordingHandler:
 
     transactions: list[Transaction] = field(default_factory=list)
 
-    async def __call__(self, transaction: Transaction) -> None:
+    async def __call__(
+        self, transaction: Transaction, checkpoint: CheckpointHandle
+    ) -> None:
         self.transactions.append(transaction)
 
 

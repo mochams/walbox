@@ -87,12 +87,13 @@ async def _consume_loop(self, handler: Handler) -> None:
             transaction = await self._queue.get()
         except asyncio.QueueShutDown:
             return
-        await self._process(transaction, handler)   # handler(...) then checkpoint.save(...)
+        await self._process(transaction, handler)   # handler(tx, checkpoint), which checkpoints itself
 ```
 
 The receiver's entire responsibility shrinks to "turn bytes into assembled
 transactions and get them onto the queue without ever going silent for too long";
-calling the handler and attaching a checkpoint move entirely to the consumer.
+calling the handler (and, inside it, the handler calling `checkpoint.save(...)`)
+moves entirely to the consumer.
 
 **The backpressure-vs-feedback race.** When the queue is full, the receiver doesn't
 just block on enqueueing; it keeps sending status updates on the existing schedule

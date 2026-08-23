@@ -40,7 +40,7 @@ def _options() -> ReplicationOptions:
 def test_record_durable_progress_advances_durable_lsn():
     client = ReplicationClient(_options())
 
-    client._record_durable_progress(100)
+    client._record_durable_progress(100, 0.01)
 
     assert client._durable_lsn == 100
 
@@ -48,19 +48,40 @@ def test_record_durable_progress_advances_durable_lsn():
 def test_record_durable_progress_never_regresses():
     client = ReplicationClient(_options())
 
-    client._record_durable_progress(100)
-    client._record_durable_progress(50)
+    client._record_durable_progress(100, 0.01)
+    client._record_durable_progress(50, 0.01)
 
     assert client._durable_lsn == 100
 
 
+def test_record_durable_progress_tracks_the_latest_checkpoint_latency():
+    client = ReplicationClient(_options())
+
+    client._record_durable_progress(100, 0.25)
+
+    assert client._last_checkpoint_latency == 0.25
+
+
 async def test_checkpoint_handle_save_invokes_the_hook_after_the_store_call():
     store = _FakeCheckpointStore()
-    handle = CheckpointHandle(store, lambda lsn: store.order.append(("hook", lsn)))
+    handle = CheckpointHandle(
+        store, lambda lsn, latency: store.order.append(("hook", lsn))
+    )
 
     await handle.save(42)
 
     assert store.order == [("store", 42), ("hook", 42)]
+
+
+async def test_checkpoint_handle_save_reports_a_nonnegative_latency():
+    store = _FakeCheckpointStore()
+    latencies = []
+    handle = CheckpointHandle(store, lambda lsn, latency: latencies.append(latency))
+
+    await handle.save(42)
+
+    assert len(latencies) == 1
+    assert latencies[0] >= 0
 
 
 async def test_checkpoint_handle_with_no_hook_does_not_raise():

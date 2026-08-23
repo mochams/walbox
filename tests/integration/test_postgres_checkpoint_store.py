@@ -10,6 +10,7 @@ import uuid
 
 import pytest
 from psycopg import AsyncConnection
+from psycopg_pool import AsyncConnectionPool
 
 from walbox.checkpoint import PostgresCheckpointStore
 
@@ -222,3 +223,46 @@ async def test_schema_created_lazily_on_first_load(
     )
 
     assert await store.load() is None
+
+
+async def test_from_pool_load_and_save_round_trip_via_a_real_pool(
+    postgres_dsn: str, table: str
+) -> None:
+    consumer_name = _unique_consumer_name()
+    async with AsyncConnectionPool(
+        postgres_dsn, min_size=1, max_size=2, open=False
+    ) as pool:
+        store = PostgresCheckpointStore.from_pool(
+            pool, consumer_name=consumer_name, table=table
+        )
+
+        assert await store.load() is None
+
+        await store.save(100)
+
+        assert await store.load() == 100
+
+
+async def test_from_pool_save_with_connection_is_unaffected_by_the_pool(
+    postgres_dsn: str,
+    table: str,
+    sink_table: None,
+) -> None:
+    """The pool only backs ad hoc `load()`/connection-less `save()` calls --
+    the same-transaction pattern still needs the caller's own connection,
+    pool or not, exactly as it does for a plain `dsn`-constructed store.
+    """
+    consumer_name = _unique_consumer_name()
+    async with AsyncConnectionPool(
+        postgres_dsn, min_size=1, max_size=2, open=False
+    ) as pool:
+        store = PostgresCheckpointStore.from_pool(
+            pool, consumer_name=consumer_name, table=table
+        )
+
+        async with await AsyncConnection.connect(postgres_dsn) as conn:
+            await conn.execute(f"INSERT INTO {table}_sink (value) VALUES ('sink-row')")
+            await store.save(100, connection=conn)
+            await conn.commit()
+
+        assert await store.load() == 100

@@ -1,8 +1,8 @@
-"""Integration test for `manage_checkpoint` wiring against a real client run.
+"""Integration test for checkpoint-handle wiring against a real client run.
 
-Exercises `FileCheckpointStore` and `manage_checkpoint=False` together: the
-application, not the client, is responsible for calling
-`tx.checkpoint.save(...)`, exactly as the project's README example shows.
+Exercises `FileCheckpointStore`: the application, not the client, is
+responsible for calling `checkpoint.save(...)`, exactly as the project's
+README example shows -- walbox has no auto-checkpoint mode.
 """
 
 import asyncio
@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from psycopg import AsyncConnection
 
+from walbox.abc import CheckpointHandle
 from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
 from walbox.checkpoint import FileCheckpointStore
@@ -60,7 +61,7 @@ async def _wait_slot_active(dsn: str, slot_name: str, attempts: int = 100) -> No
     pytest.fail(f"slot {slot_name} did not become active in time")
 
 
-async def test_manage_checkpoint_false_allows_the_handler_to_save_explicitly(
+async def test_handler_checkpoints_explicitly_via_the_handle_it_is_given(
     postgres_dsn: str,
     outbox_table: None,
     tmp_path: Path,
@@ -75,14 +76,12 @@ async def test_manage_checkpoint_false_allows_the_handler_to_save_explicitly(
         slot_name=slot_name,
         publication_name="walbox_pub",
         checkpoint_store=checkpoint_store,
-        manage_checkpoint=False,
     )
     client = ReplicationClient(options)
     saved: list[int] = []
 
-    async def handler(transaction: Transaction) -> None:
-        assert transaction.checkpoint is not None
-        await transaction.checkpoint.save(transaction.commit_lsn)
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
+        await checkpoint.save(transaction.commit_lsn)
         saved.append(transaction.commit_lsn)
 
     task = asyncio.ensure_future(client.run(handler))

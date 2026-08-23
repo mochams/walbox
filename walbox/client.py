@@ -15,7 +15,6 @@ import logging
 import time
 from collections.abc import Awaitable
 from collections.abc import Callable
-from dataclasses import replace
 from typing import TypeVar
 
 from walbox.abc import CheckpointHandle
@@ -35,7 +34,7 @@ from walbox.protocol import pg_now_micros
 from walbox.transaction import TransactionAssembler
 from walbox.transport import ReplicationTransport
 
-Handler = Callable[[Transaction], Awaitable[None]]
+Handler = Callable[[Transaction, CheckpointHandle], Awaitable[None]]
 
 logger = logging.getLogger("walbox.client")
 
@@ -122,7 +121,11 @@ class ReplicationClient:
         uncaught, ending `run`.
 
         Args:
-            handler: Called once per assembled `Transaction`, in commit order.
+            handler: Called once per assembled `Transaction`, in commit order,
+                with a `CheckpointHandle` bound to this run's checkpoint
+                store -- the handler is always responsible for calling
+                `checkpoint.save(...)` itself; walbox never checkpoints
+                automatically.
         """
         self._next_backoff = _INITIAL_BACKOFF
         while not self._closing.is_set():
@@ -321,19 +324,15 @@ class ReplicationClient:
             self.options.checkpoint_store,
             self._record_durable_progress,
         )
-        transaction = replace(transaction, checkpoint=checkpoint)
         self._transactions_processed += 1
         self._changes_processed += len(transaction.changes)
         handler_started_at = time.monotonic()
-        await handler(transaction)
+        await handler(transaction, checkpoint)
         self._last_handler_latency = time.monotonic() - handler_started_at
-        if self.options.manage_checkpoint:
-            checkpoint_started_at = time.monotonic()
-            await checkpoint.save(transaction.commit_lsn)
-            self._last_checkpoint_latency = time.monotonic() - checkpoint_started_at
 
-    def _record_durable_progress(self, lsn: int) -> None:
+    def _record_durable_progress(self, lsn: int, latency: float) -> None:
         self._durable_lsn = max(self._durable_lsn, lsn)
+        self._last_checkpoint_latency = latency
 
     async def _maybe_report_metrics(self) -> None:
         """Invoke `options.on_metrics`, if set, with a fresh `Metrics` snapshot.

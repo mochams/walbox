@@ -1,4 +1,4 @@
-"""Unit tests for `manage_checkpoint` wiring in `client.py`.
+"""Unit tests for checkpoint-handle wiring in `client.py`.
 
 Pure, no Postgres: a fake `CheckpointStore` double, with a synthetic
 Begin/Commit pair driven through `_handle_xlog_data` (enqueue) and then
@@ -31,18 +31,13 @@ class _RecordingCheckpointStore:
         self.order.append(f"save:{lsn}")
 
 
-def _options(
-    *,
-    manage_checkpoint: bool,
-    checkpoint_store: _RecordingCheckpointStore,
-) -> ReplicationOptions:
+def _options(*, checkpoint_store: _RecordingCheckpointStore) -> ReplicationOptions:
     return ReplicationOptions(
         consumer_name="test-consumer",
         dsn="postgresql://example",
         slot_name="test_slot",
         publication_name="test_pub",
         checkpoint_store=checkpoint_store,
-        manage_checkpoint=manage_checkpoint,
     )
 
 
@@ -88,40 +83,45 @@ async def _feed_one_transaction(client: ReplicationClient, handler: Handler) -> 
     await client._process(transaction, handler)
 
 
-async def test_transaction_checkpoint_field_is_populated_before_handler_is_called():
+async def test_handler_receives_a_checkpoint_handle_as_its_second_argument():
     store = _RecordingCheckpointStore()
-    client = ReplicationClient(_options(manage_checkpoint=True, checkpoint_store=store))
-    seen: list[Transaction] = []
+    client = ReplicationClient(_options(checkpoint_store=store))
+    seen: list[tuple[Transaction, CheckpointHandle]] = []
 
-    async def handler(transaction: Transaction) -> None:
-        seen.append(transaction)
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
+        seen.append((transaction, checkpoint))
 
     await _feed_one_transaction(client, handler)
 
     assert len(seen) == 1
-    assert isinstance(seen[0].checkpoint, CheckpointHandle)
+    _transaction, checkpoint = seen[0]
+    assert isinstance(checkpoint, CheckpointHandle)
 
 
-async def test_manage_checkpoint_true_calls_save_after_handler_returns():
+async def test_client_never_calls_save_automatically():
+    """The handler is always solely responsible for calling `checkpoint.save`.
+
+    walbox has no auto-checkpoint mode: a handler that never calls
+    `checkpoint.save(...)` itself leaves the store untouched, no matter how
+    many transactions are processed.
+    """
     store = _RecordingCheckpointStore()
-    client = ReplicationClient(_options(manage_checkpoint=True, checkpoint_store=store))
-
-    async def handler(transaction: Transaction) -> None:
-        store.order.append("handler")
-
-    await _feed_one_transaction(client, handler)
-
-    # commit_lsn is derived from end_lsn - 1 (see TransactionAssembler): 150 - 1 == 149
-    assert store.order == ["handler", "save:149"]
-
-
-async def test_manage_checkpoint_false_never_calls_save_automatically():
-    store = _RecordingCheckpointStore()
-    client = ReplicationClient(
-        _options(manage_checkpoint=False, checkpoint_store=store)
-    )
+    client = ReplicationClient(_options(checkpoint_store=store))
     handler = AsyncMock()
 
     await _feed_one_transaction(client, handler)
 
     assert store.order == []
+
+
+async def test_handler_calling_checkpoint_save_is_what_persists_progress():
+    store = _RecordingCheckpointStore()
+    client = ReplicationClient(_options(checkpoint_store=store))
+
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
+        await checkpoint.save(transaction.commit_lsn)
+
+    await _feed_one_transaction(client, handler)
+
+    # commit_lsn is derived from end_lsn - 1 (see TransactionAssembler): 150 - 1 == 149
+    assert store.order == ["save:149"]

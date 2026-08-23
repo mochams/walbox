@@ -8,6 +8,7 @@ from walbox import errors as walbox_errors
 _EXPECTED_ALL = {
     "ChangeEvent",
     "ChangeKind",
+    "CheckpointHandle",
     "CheckpointStore",
     "FileCheckpointStore",
     "PostgresCheckpointStore",

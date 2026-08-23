@@ -50,6 +50,7 @@ import signal
 
 from walbox import (
     ChangeKind,
+    CheckpointHandle,
     PostgresCheckpointStore,
     ReplicationClient,
     ReplicationOptions,
@@ -62,13 +63,13 @@ async def publish_to_broker(payload: dict) -> None:
     print("publishing:", payload)
 
 
-async def handle(tx: Transaction) -> None:
+async def handle(tx: Transaction, checkpoint: CheckpointHandle) -> None:
     for change in tx.changes:
         if change.table != "public.outbox" or change.kind != ChangeKind.INSERT:
             continue
         await publish_to_broker(change.new)
 
-    await tx.checkpoint.save(tx.commit_lsn)
+    await checkpoint.save(tx.commit_lsn)
 
 
 async def main() -> None:
@@ -81,7 +82,6 @@ async def main() -> None:
         slot_name="outbox_slot",
         publication_name="walbox_pub",
         checkpoint_store=checkpoint_store,
-        manage_checkpoint=False,  # handle() checkpoints explicitly, after publishing.
     )
 
     client = ReplicationClient(options)
@@ -127,7 +127,7 @@ transaction → outbox row → logical replication → handler → external sink
 Exactly-once *effects* come from combining the transactional outbox write with
 durable checkpointing and an idempotent/deduplicating sink: either dedupe on
 `outbox.id`, or, when the sink is itself PostgreSQL, use
-`PostgresCheckpointStore`'s same-transaction pattern (`handle_with_atomic_checkpoint`
+`PostgresCheckpointStore`'s same-transaction pattern (`handle`
 in [`examples/outbox_postgres.py`](examples/outbox_postgres.py)). If the process
 crashes after an external publish succeeds but before the checkpoint is durable,
 the transaction **will** be delivered again. That's intentional, not a bug.

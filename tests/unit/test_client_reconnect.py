@@ -146,7 +146,7 @@ async def test_run_retries_on_replication_connection_error_and_eventually_succee
 
     assert transport.connect_calls == 3
     handler.assert_awaited_once()
-    (delivered,), _kwargs = handler.await_args
+    (delivered, _checkpoint), _kwargs = handler.await_args
     assert delivered.xid == 1
 
 
@@ -170,7 +170,7 @@ async def test_handler_exceptions_are_not_retried():
     client = ReplicationClient(_options())
     client._new_transport = lambda: transport
 
-    async def handler(transaction: object) -> None:
+    async def handler(transaction: object, checkpoint: object) -> None:
         raise ValueError(transaction)
 
     with pytest.raises(ExceptionGroup) as exc_info:
