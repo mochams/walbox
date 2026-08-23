@@ -1,6 +1,6 @@
 # Architecture
 
-This is the current, as-built system design — the authoritative description of how
+This is the current, as-built system design: the authoritative description of how
 walbox's layers fit together. Where anything here disagrees with walbox's actual
 source, the source wins.
 
@@ -33,12 +33,12 @@ Replication feedback (Client Runtime) ── StandbyStatusUpdate, reflecting onl
                                           what's actually durable
 ```
 
-Each layer is a separate module with one responsibility — protocol, state, and
+Each layer is a separate module with one responsibility: protocol, state, and
 policy are kept apart rather than mixed into one place:
 
 | Module | Owns |
 |---|---|
-| `walbox/transport.py` | libpq/socket mechanics — opening the connection, driving COPY BOTH |
+| `walbox/transport.py` | libpq/socket mechanics: opening the connection, driving COPY BOTH |
 | `walbox/protocol.py` | outer replication-message framing (XLogData/keepalive/status-update) |
 | `walbox/pgoutput.py` | inner pgoutput sub-protocol decoding |
 | `walbox/transaction.py` | transaction assembly, including streaming |
@@ -50,7 +50,7 @@ policy are kept apart rather than mixed into one place:
 One deliberate deviation from the original brief: `protocol.py`'s scope shrank after
 the [replication-transport research](docs/research/replication-transport-architecture.md)
 established that libpq itself already owns CopyData/CopyDone envelope framing in
-both directions. `protocol.py` never implements that framing — it only decodes/
+both directions. `protocol.py` never implements that framing; it only decodes/
 encodes the messages *inside* an already-unwrapped payload. See
 [RFC 04](docs/rfc-04-replication-transport.md) and
 [RFC 02](docs/rfc-02-wire-decoding.md) for the full reasoning.
@@ -58,7 +58,7 @@ encodes the messages *inside* an already-unwrapped payload. See
 ## The core correctness invariant
 
 walbox's fundamental guarantee is **at-least-once transaction delivery with a
-durable local replay position** — never end-to-end exactly-once. The one invariant
+durable local replay position**, never end-to-end exactly-once. The one invariant
 every layer above is built to uphold:
 
 ```
@@ -74,7 +74,25 @@ before the application has actually finished its handler *and* the corresponding
 checkpoint has been made durable. A crash may cause replay; it must never cause
 silent loss. Duplicates are acceptable and expected. Exactly-once *effects* (not
 exactly-once *delivery*) are achieved by the application layering an idempotent or
-deduplicating sink on top — see README.md's Exactly-once-effects section.
+deduplicating sink on top (see README.md's Exactly-once-effects section).
+
+## Failure semantics
+
+One row per crash point, each traceable to the RFC that guarantees it:
+
+| Crash point | Outcome on restart |
+|---|---|
+| Before handler runs | Transaction fully redelivered once replication resumes from the durable checkpoint. |
+| During handler execution | Redelivered in full; sink must tolerate a partially-applied-then-repeated attempt (dedupe on `outbox.id`). |
+| After handler succeeds, before checkpoint saved | Redelivered: the canonical at-least-once duplicate. Durability is never sacrificed to avoid it. |
+| During checkpoint save | The previous durable checkpoint remains valid (`FileCheckpointStore`'s atomic rename, or `PostgresCheckpointStore`'s transactional rollback leaving the prior committed row intact); transaction redelivered. |
+| After checkpoint durable, before feedback sent | Feedback resumes from the checkpoint on reconnect; Postgres may redeliver already-checkpointed work if its own `confirmed_flush_lsn` lagged; this is tolerated, but the handler must stay idempotent regardless. |
+| After feedback sent, before Postgres durably records it | Same as above: feedback is a hint for WAL retention/restart position, never the app's own source of truth for progress. |
+| Mid-receive (partway through a WAL message) | The partial message is never assembled into a `Transaction`; full retransmission from the checkpoint on reconnect. |
+| Mid-keepalive reply | No durable state was claimed; safe, since the connection simply times out and reconnects normally. |
+| Mid-reconnect | Next attempt retries from the same durable checkpoint; a failed reconnect attempt claims no progress. |
+| Mid-shutdown | Never worse than a plain crash at the same point in the sequence: whatever wasn't yet durable is redelivered, whatever was, isn't. |
+| Mid-large/streamed transaction | The in-memory streamed-transaction buffer is lost; it was never durable by design. Postgres resends the entire transaction from scratch on reconnect; no partial/corrupt delivery. |
 
 ## Error hierarchy
 
@@ -110,11 +128,11 @@ otherwise care about. This keeps each layer's raise sites honest about what they
 actually know, rather than threading full context through every call site up front.
 
 `ProtocolError` deliberately covers both byte-level framing violations (Wire
-Decoding) and message-sequencing violations (Transaction Assembly) — both are
+Decoding) and message-sequencing violations (Transaction Assembly); both are
 fundamentally "the protocol's contract was violated," just detected in different
 layers; splitting them wouldn't give callers a meaningfully different way to react.
 `ReplicationConnectionError` is the one exception type Client Runtime's reconnect
-loop treats as worth retrying — everything else indicates a genuine bug or a
+loop treats as worth retrying; everything else indicates a genuine bug or a
 corrupted stream, not a transient condition.
 
 ## Where each feature lives
