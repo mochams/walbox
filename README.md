@@ -128,9 +128,9 @@ Exactly-once *effects* come from combining the transactional outbox write with
 durable checkpointing and an idempotent/deduplicating sink: either dedupe on
 `outbox.id`, or, when the sink is itself PostgreSQL, use
 `PostgresCheckpointStore`'s same-transaction pattern (`handle_with_atomic_checkpoint`
-in [`examples/outbox.py`](examples/outbox.py)). If the process crashes after an
-external publish succeeds but before the checkpoint is durable, the transaction
-**will** be delivered again. That's intentional, not a bug.
+in [`examples/outbox_postgres.py`](examples/outbox_postgres.py)). If the process
+crashes after an external publish succeeds but before the checkpoint is durable,
+the transaction **will** be delivered again. That's intentional, not a bug.
 
 ## Failure semantics
 
@@ -148,7 +148,7 @@ crash-point-by-crash-point table is in
 - **Python 3.13+**: `asyncio.Queue.shutdown()`, which backpressure and graceful
   shutdown depend on, is a 3.13 addition.
 
-Both are deliberate v0.1 floors, not aspirations to relax later.
+Both are deliberate floors for this release, not aspirations to relax later.
 
 ## Limitations
 
@@ -164,15 +164,15 @@ Both are deliberate v0.1 floors, not aspirations to relax later.
 
 ## Status
 
-The code is tested and correct for everything described above: 100% branch coverage,
-including integration tests against real PostgreSQL for every failure scenario in the
-table above. "Pre-1.0" here is about the API surface still settling, not about whether
-it's safe to run.
+This is a 1.0.0 beta. The code is tested and correct for everything described above:
+100% branch coverage, including integration tests against real PostgreSQL for every
+failure scenario in the table above. "Beta" here is about the API surface still
+settling, not about whether it's safe to run.
 
 Concretely: the public export list won't shrink, though construction signatures and
-field names may still shift between pre-1.0 releases. The `Metrics` callback shape and
-streamed-vs-non-streamed `Transaction` semantics are most likely to still change before
-1.0. Once 1.0 ships, the stable surface follows semver.
+field names may still shift before the final 1.0.0 ships. The `Metrics` callback shape
+and streamed-vs-non-streamed `Transaction` semantics are the most likely candidates to
+still change. Once the final 1.0.0 ships, the stable surface follows semver.
 
 ## See also
 

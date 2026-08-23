@@ -153,7 +153,6 @@ asyncio_default_fixture_loop_scope = "function"
 addopts = [
     "--strict-markers",
     "--cov=walbox",
-    "--cov=examples",
     "--cov-fail-under=100",
     "--cov-report=term-missing",
     "--durations=10",

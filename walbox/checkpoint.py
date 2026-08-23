@@ -138,14 +138,16 @@ class PostgresCheckpointStore:
     ) -> None:
         """Durably persist `lsn` as the new replay position for this consumer.
 
-        If `connection` is given, the upsert is executed on it and left
-        uncommitted -- the caller owns the transaction boundary, so this can
-        become durable atomically together with whatever else the caller
-        writes on that same connection. Without `connection`, this opens its
-        own ad hoc connection and commits immediately.
+        If `connection` is given, the upsert (and, on first use, the backing
+        table's creation) is executed on it and left uncommitted -- the
+        caller owns the transaction boundary, so this can become durable
+        atomically together with whatever else the caller writes on that
+        same connection. Without `connection`, this opens its own ad hoc
+        connection and commits immediately.
         """
         started_at = time.monotonic()
         if connection is not None:
+            await self._ensure_schema(connection)
             await self._upsert(connection, lsn)
         else:
             async with await psycopg.AsyncConnection.connect(self._dsn) as conn:
@@ -160,6 +162,16 @@ class PostgresCheckpointStore:
         )
 
     async def _ensure_schema(self, conn: AsyncConnection[Any]) -> None:
+        """Create the backing table if needed, without committing.
+
+        Left uncommitted deliberately: `CREATE TABLE IF NOT EXISTS` is
+        transactional in Postgres, so it's safe to run on a caller-supplied
+        `save(connection=...)` connection and let the caller's own commit
+        (or the own-connection paths' `async with`/explicit commit) persist
+        it -- committing here would durably commit the caller's in-progress
+        transaction early, breaking the same-transaction guarantee `save`'s
+        `connection=` parameter exists to provide.
+        """
         if self._schema_ready:
             return
         await conn.execute(
@@ -171,7 +183,6 @@ class PostgresCheckpointStore:
                 ")",
             ).format(table=self._table),
         )
-        await conn.commit()
         self._schema_ready = True
 
     async def _upsert(self, conn: AsyncConnection[Any], lsn: int) -> None:

@@ -11,7 +11,7 @@ see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Status and scope
 
-walbox is pre-1.0. Its scope is deliberately narrow: a correct, asyncio-native
+walbox is at a 1.0.0 beta. Its scope is deliberately narrow: a correct, asyncio-native
 logical-replication reader with durable checkpointing, backpressure, reconnect, and
 graceful shutdown, not a general ORM, not a message broker, not a metrics
 framework. README.md's Status section covers the exact stable public surface and

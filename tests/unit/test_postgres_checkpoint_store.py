@@ -84,8 +84,8 @@ async def test_save_without_connection_opens_its_own_connection_and_commits(
 
     await store.save(100)
 
-    # One commit from `_ensure_schema` creating the table, one from `save` itself.
-    assert fake_conn.committed == 2
+    # Schema creation and the upsert commit together, in one commit.
+    assert fake_conn.committed == 1
     assert len(_create_table_calls(fake_conn)) == 1
     assert len(fake_conn.executed) == 2  # CREATE TABLE + upsert
 
@@ -102,8 +102,26 @@ async def test_save_with_connection_upserts_without_its_own_connection_or_commit
 
     connect_mock.assert_not_called()
     assert conn.committed == 0
-    assert _create_table_calls(conn) == []
-    assert len(conn.executed) == 1
+    assert len(conn.executed) == 2  # CREATE TABLE + upsert
+
+
+async def test_save_with_connection_as_the_first_call_still_creates_the_table(
+    monkeypatch,
+):
+    """Regression test: `save(connection=...)` used to skip schema creation
+    entirely, so calling it as a store's very first operation (no prior
+    `load()` or connection-less `save()`) raised against a real Postgres
+    because the backing table never existed.
+    """
+    connect_mock = AsyncMock()
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", connect_mock)
+    store = PostgresCheckpointStore("dsn", consumer_name="consumer")
+    conn = _FakeConnection()
+
+    await store.save(100, connection=conn)
+
+    assert len(_create_table_calls(conn)) == 1
+    assert conn.committed == 0  # left for the caller to commit
 
 
 async def test_ensure_schema_only_creates_the_table_once_per_store(monkeypatch):
@@ -119,3 +137,22 @@ async def test_ensure_schema_only_creates_the_table_once_per_store(monkeypatch):
     await store.save(200)
 
     assert len(_create_table_calls(fake_conn)) == 1
+
+
+async def test_ensure_schema_is_not_repeated_across_connection_and_own_connection_saves(
+    monkeypatch,
+):
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(
+        psycopg.AsyncConnection,
+        "connect",
+        AsyncMock(return_value=fake_conn),
+    )
+    store = PostgresCheckpointStore("dsn", consumer_name="consumer")
+    caller_conn = _FakeConnection()
+
+    await store.save(100, connection=caller_conn)
+    await store.save(200)
+
+    assert len(_create_table_calls(caller_conn)) == 1
+    assert len(_create_table_calls(fake_conn)) == 0
