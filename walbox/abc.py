@@ -45,11 +45,8 @@ class CheckpointStore(Protocol):
     ) -> None:
         """Durably persist `lsn` as the new replay position.
 
-        Args:
-            lsn: The replay position to persist.
-            connection: An optional already-open Postgres connection/
-                transaction for an implementation to join, instead of
-                opening its own.
+        `connection`, if given, is an already-open Postgres connection or
+        transaction the implementation can join instead of opening its own.
         """
         ...
 
@@ -69,11 +66,8 @@ class CheckpointHandle:
     ) -> None:
         """Durably persist `lsn` via the bound `CheckpointStore`.
 
-        Args:
-            lsn: The replay position to persist.
-            connection: An optional already-open Postgres connection/
-                transaction for the underlying store to join, instead of
-                opening its own.
+        `connection`, if given, is an already-open Postgres connection or
+        transaction the underlying store can join instead of opening its own.
         """
         started_at = time.monotonic()
         await self._store.save(lsn, connection=connection)
@@ -95,10 +89,9 @@ class Transaction:
 class Metrics:
     """A point-in-time snapshot of replication counters and gauges.
 
-    Handed to `ReplicationOptions.on_metrics` from the same periodic spot
-    the status-update timer already fires from -- no historical
-    aggregation (rolling windows, percentiles, rates) is done here; that's
-    the application's job if it wants one.
+    Handed to `ReplicationOptions.on_metrics` on the same timer as status
+    updates. No historical aggregation (rolling windows, percentiles,
+    rates) is done here; that's on the application if it wants one.
     """
 
     receive_lsn: int

@@ -1,26 +1,16 @@
 """pgoutput logical replication message decoding.
 
 Decodes the pgoutput sub-protocol carried as the opaque `payload` bytes
-inside an `XLogData` message (`walbox/protocol.py`) -- this module never
-imports from `protocol.py` and has no reason to see the outer replication
-framing. Covers the message kinds needed for row-change replication:
-`Relation`, `Begin`, `Insert`, `Update`, `Delete`, `Commit`, plus `Truncate`,
-`Type`, and `Origin`, plus `StreamStart`, `StreamStop`, `StreamCommit`, and
-`StreamAbort` for PostgreSQL's streamed (in-progress) transactions.
-`Truncate` is actionable and decodes into `ChangeEvent`s just like
-Insert/Update/Delete; `Type` and
-`Origin` are decoded fully (so the byte stream never desyncs) but are not
-actionable for the outbox pattern, so `walbox/client.py` logs and discards
-them rather than forwarding them to `transaction.py`. Every other message
-kind (prepared-transaction messages, the generic `Message` type, ...) is a
-real gap the caller needs to know about, so it raises `DecodeError` rather
-than being silently ignored.
+inside an `XLogData` message. Covers `Relation`, `Begin`, `Insert`,
+`Update`, `Delete`, `Commit`, `Truncate`, `Type`, `Origin`, and the four
+`Stream*` kinds used for PostgreSQL's streamed (in-progress) transactions.
+`Type` and `Origin` are decoded fully but never acted on: `client.py` logs
+and discards them. Any other message kind raises `DecodeError` rather than
+being silently ignored.
 
-Every non-null column value arrives in **text** format -- Postgres's own
-output-function representation as a string (this is what requesting
-`START_REPLICATION` without the separate `binary` suboption means on the
-wire, independent of `proto_version`) -- so column values decode to
-`str | None` exactly as sent, with no type coercion to native Python types.
+Every non-null column value arrives in Postgres's text format, so column
+values decode to `str | None` exactly as sent, with no coercion to native
+Python types.
 """
 
 import logging
@@ -80,13 +70,10 @@ class Insert:
     """A single inserted row, with its new values keyed by column name.
 
     `subxid` is the specific (sub)transaction this change belongs to,
-    present only while a streaming bracket is open. It is PostgreSQL's own
-    per-change transaction id (`pgoutput.c`'s `change->txn->xid`) -- *not*
-    necessarily the streaming bracket's top-level xid. A change made
-    directly in the top-level transaction carries that transaction's own
-    id here; a change made under a `SAVEPOINT` carries that savepoint's own
-    id instead. This is exactly what lets a subxid-scoped `StreamAbort`
-    discard precisely the right changes later.
+    present only while a streaming bracket is open. It's not necessarily
+    the streaming bracket's top-level xid: a change made under a
+    `SAVEPOINT` carries that savepoint's own id instead, which is what lets
+    a subxid-scoped `StreamAbort` discard precisely the right changes later.
     """
 
     relation_id: int
@@ -100,13 +87,12 @@ class Update:
     """A single updated row.
 
     `old` is `None` when neither a `'K'` nor an `'O'` marker was present on
-    the wire, which happens when REPLICA IDENTITY is `DEFAULT` (or `USING
-    INDEX`) and none of the identity columns changed -- a legal, documented
-    outcome, not a decode failure. When present, `old` holds only the
-    columns the wire actually sent: key columns for a `'K'` marker, every
+    the wire: a legal outcome when REPLICA IDENTITY is `DEFAULT` and none of
+    the identity columns changed, not a decode failure. When present, `old`
+    holds only the columns the wire sent: key columns for `'K'`, every
     column for `'O'`.
 
-    `subxid` -- see `Insert.subxid`; identical meaning.
+    `subxid`: see `Insert.subxid`.
     """
 
     relation_id: int
@@ -120,11 +106,11 @@ class Update:
 class Delete:
     """A single deleted row.
 
-    `old` holds only the columns the wire actually sent: key columns for a
-    `'K'` marker, every column for `'O'`. Unlike `Update`, the wire always
-    sends one of these two markers for a `Delete`, so `old` is never `None`.
+    `old` holds only the columns the wire sent: key columns for `'K'`,
+    every column for `'O'`. Unlike `Update`, a `Delete` always carries one
+    of these markers, so `old` is never `None`.
 
-    `subxid` -- see `Insert.subxid`; identical meaning.
+    `subxid`: see `Insert.subxid`.
     """
 
     relation_id: int
@@ -147,14 +133,11 @@ class Commit:
 class Truncate:
     """A `TRUNCATE` of one or more published tables, resolved to table names.
 
-    `cascade`/`restart_identity` are kept for logging even though they
-    don't reach `ChangeEvent` -- `ChangeEvent` deliberately isn't extended
-    with a field for them.
+    `cascade`/`restart_identity` are kept for logging; `ChangeEvent` isn't
+    extended with fields for them.
 
-    `subxid` -- see `Insert.subxid`; identical meaning. `TRUNCATE` cannot be
-    run inside a subtransaction that also does row-level DML on the same
-    statement, but it can still occur after a `SAVEPOINT`, so this is
-    tracked the same way as the row-change message kinds.
+    `subxid`: see `Insert.subxid`. `TRUNCATE` can still occur after a
+    `SAVEPOINT`, so it's tracked the same way as the row-change kinds.
     """
 
     tables: tuple[str, ...]  # resolved "namespace.name", in wire order
@@ -167,10 +150,8 @@ class Truncate:
 class Type:
     """A custom type's OID->name mapping, decoded but never acted on.
 
-    Exists so a subscriber *could* map a column's type OID to a name for
-    custom (non-builtin) types; walbox doesn't need that for the outbox
-    pattern, so this is logged and discarded, never forwarded to
-    `transaction.py`.
+    Logged and discarded rather than forwarded to `transaction.py`; walbox
+    doesn't need type-OID resolution for the outbox pattern.
     """
 
     type_oid: int
@@ -182,10 +163,9 @@ class Type:
 class Origin:
     """The replication origin of the transaction, decoded but never acted on.
 
-    Same treatment as `Type`: logged and discarded. Unlike every other
-    pgoutput message kind, `Origin` never carries a leading `Xid` field,
-    streamed or not -- but since walbox never acts on its content, it never
-    needs to know which transaction it belongs to.
+    Same treatment as `Type`: logged and discarded. Unlike other pgoutput
+    messages, `Origin` never carries a leading `Xid` field, but walbox
+    never needs to know which transaction it belongs to anyway.
     """
 
     origin_lsn: int
@@ -196,10 +176,9 @@ class Origin:
 class StreamStart:
     """Marks the start of one chunk of a streamed (in-progress) transaction.
 
-    `first_segment` is `True` for the first chunk ever sent for `xid`, and
-    `False` for every later chunk of the same streamed transaction -- see
-    `TransactionAssembler.stream_start` for how that distinguishes "open a
-    new buffer" from "resume an existing one".
+    `first_segment` is `True` for the first chunk sent for `xid`, `False`
+    for later chunks. See `TransactionAssembler.stream_start` for how that
+    distinguishes opening a new buffer from resuming one.
     """
 
     xid: int
@@ -210,9 +189,9 @@ class StreamStart:
 class StreamStop:
     """Marks the end of one chunk of a streamed transaction.
 
-    Carries no fields of its own -- it is purely a chunk boundary. The
-    streamed transaction's buffer stays open across it; only `StreamCommit`
-    or `StreamAbort` closes it.
+    Carries no fields of its own, it's purely a chunk boundary. The
+    transaction's buffer stays open across it; only `StreamCommit` or
+    `StreamAbort` closes it.
     """
 
 
@@ -235,10 +214,10 @@ class StreamCommit:
 class StreamAbort:
     """An abort of a streamed transaction or one of its subtransactions.
 
-    `subxid == xid` for a full-transaction abort (the common case); a
-    `subxid` differing from `xid` marks a `ROLLBACK TO SAVEPOINT` inside the
-    streamed transaction -- see `TransactionAssembler.stream_abort` for how
-    that precisely discards only the rolled-back savepoint's changes.
+    `subxid == xid` for a full-transaction abort. A `subxid` differing from
+    `xid` marks a `ROLLBACK TO SAVEPOINT`; see
+    `TransactionAssembler.stream_abort` for how that discards only the
+    rolled-back savepoint's changes.
     """
 
     xid: int
@@ -265,12 +244,10 @@ PgoutputMessage = (
 class RelationCache:
     """Remembers every `Relation` message seen so far on a connection.
 
-    Row-change messages reference a relation only by OID; resolving that
-    OID to column names, order, and key-column flags requires remembering
-    the most recent `Relation` message for it. A `Relation` message
-    re-describing an OID (e.g. after a DDL change) simply overwrites the
-    prior entry -- last write wins, with no separate invalidation logic
-    needed.
+    Row-change messages reference a relation only by OID, so resolving to
+    column names and key-column flags needs the most recent `Relation`
+    message for it. A `Relation` re-describing an OID simply overwrites the
+    prior entry; last write wins.
     """
 
     def __init__(self) -> None:
@@ -295,9 +272,6 @@ class RelationCache:
 
     def get(self, relation_id: int) -> Relation:
         """Look up the cached schema for `relation_id`.
-
-        Args:
-            relation_id: The relation OID from a row-change message.
 
         Returns:
             The most recently cached `Relation` for that OID.
@@ -324,13 +298,9 @@ def _read_cstring(buf: bytes, offset: int) -> tuple[str, int]:
 def decode_relation(payload: bytes, *, streaming: bool = False) -> Relation:
     """Decode a `Relation` ('R') message.
 
-    Args:
-        payload: A complete pgoutput message payload.
-        streaming: Whether a streaming bracket is currently
-            open, meaning a leading `Int32 xid` field is present before the
-            relation ID and must be skipped. Doesn't change the decoded
-            value -- `Relation` never carries an xid -- only where the rest
-            of the message starts.
+    `streaming=True` means a leading `Int32 xid` field is present before the
+    relation ID and must be skipped; it doesn't change the decoded value,
+    since `Relation` never carries an xid.
 
     Returns:
         The decoded `Relation`, including its full column list.
@@ -381,9 +351,6 @@ def decode_relation(payload: bytes, *, streaming: bool = False) -> Relation:
 def decode_begin(payload: bytes) -> Begin:
     """Decode a `Begin` ('B') message.
 
-    Args:
-        payload: A complete pgoutput message payload.
-
     Returns:
         The decoded `Begin`.
 
@@ -404,13 +371,12 @@ def decode_begin(payload: bytes) -> Begin:
 def decode_commit(payload: bytes) -> Commit:
     """Decode a `Commit` ('C') message.
 
-    Args:
-        payload: A complete pgoutput message payload.
+    Both `commit_lsn` and `end_lsn` are decoded faithfully; choosing which
+    one drives replication feedback is a decision for the caller, not this
+    decoder.
 
     Returns:
-        The decoded `Commit`, with both `commit_lsn` and `end_lsn` decoded
-        faithfully -- choosing which one drives replication feedback is a
-        policy decision for the checkpoint/feedback plans, not this decoder.
+        The decoded `Commit`.
 
     Raises:
         DecodeError: If `payload` isn't exactly 26 bytes or has the wrong
@@ -449,7 +415,7 @@ def _decode_tuple_data(
         elif marker == b"u":
             # Unchanged TOASTed value: Postgres omits it rather than resending
             # an unmodified large value. The column is left out of `row`
-            # entirely, distinct from 'n' (an explicit SQL NULL) -- collapsing
+            # entirely, distinct from 'n' (an explicit SQL NULL): collapsing
             # the two would lose real data once a real value and an 'u' can
             # appear in the same row (Update/Delete old tuples).
             pass
@@ -470,26 +436,15 @@ def decode_insert(
     *,
     streaming: bool = False,
 ) -> Insert:
-    """Decode an `Insert` ('I') message.
-
-    Args:
-        payload: A complete pgoutput message payload.
-        relations: The cache of previously seen `Relation` messages, used
-            to resolve the message's relation OID to column names/order.
-        streaming: Whether a streaming bracket is currently
-            open, meaning a leading `Int32` subxact-id field is present and
-            must be decoded -- see `Insert.subxid`.
+    """Decode an `Insert` ('I') message, resolving `table` via `relations`.
 
     Returns:
-        The decoded `Insert`, with `table` resolved to `namespace.name`,
-        `new` keyed by real column names, and `subxid` set from the wire
-        when `streaming` is true.
+        The decoded `Insert`.
 
     Raises:
-        DecodeError: If `payload` has the wrong leading byte, is missing
-            the new-tuple marker, references a relation OID not yet seen
-            in `relations`, or its `TupleData` column count doesn't match
-            the cached relation's column count.
+        DecodeError: If the new-tuple marker is missing, the relation OID
+            hasn't been seen yet, or the `TupleData` column count doesn't
+            match the cached relation.
     """
     if payload[0:1] != b"I":
         message = "not a valid Insert message"
@@ -521,11 +476,10 @@ def _restrict_to_key_columns(
 ) -> dict[str, str | None]:
     """Drop non-key columns from a decoded `'K'`-marked tuple.
 
-    PostgreSQL's key-only old tuple carries every column on the wire, not
-    just the key ones -- but it marks every non-key column with the plain
-    null marker `'n'`, indistinguishable on the wire from a real SQL NULL.
-    `_decode_tuple_data` has no way to tell those apart, so the caller
-    (which knows which columns are actually keys) must filter afterward.
+    PostgreSQL's key-only old tuple carries every column on the wire, with
+    non-key columns marked `'n'`, indistinguishable from a real SQL NULL.
+    `_decode_tuple_data` can't tell those apart, so the caller filters
+    afterward.
 
     Returns:
         `row`, restricted to the columns `columns` marks as keys.
@@ -539,27 +493,18 @@ def decode_update(
     *,
     streaming: bool = False,
 ) -> Update:
-    """Decode an `Update` ('U') message.
+    """Decode an `Update` ('U') message, resolving `table` via `relations`.
 
-    Args:
-        payload: A complete pgoutput message payload.
-        relations: The cache of previously seen `Relation` messages, used
-            to resolve the message's relation OID to column names/order.
-        streaming: Whether a streaming bracket is currently
-            open, meaning a leading `Int32` subxact-id field is present and
-            must be decoded -- see `Update.subxid`.
+    `old` is `None` when neither a `'K'` nor `'O'` marker is present; see
+    `Update.old`.
 
     Returns:
-        The decoded `Update`, with `table` resolved to `namespace.name`,
-        `new` keyed by real column names, `old` set to `None` when neither
-        a `'K'` nor an `'O'` marker was present on the wire, and `subxid`
-        set from the wire when `streaming` is true.
+        The decoded `Update`.
 
     Raises:
-        DecodeError: If `payload` has the wrong leading byte, is missing
-            the new-tuple marker, references a relation OID not yet seen
-            in `relations`, or a `TupleData` column count doesn't match
-            the cached relation's column count.
+        DecodeError: If the new-tuple marker is missing, the relation OID
+            hasn't been seen yet, or a `TupleData` column count doesn't
+            match the cached relation.
     """
     if payload[0:1] != b"U":
         message = "not a valid Update message"
@@ -599,26 +544,15 @@ def decode_delete(
     *,
     streaming: bool = False,
 ) -> Delete:
-    """Decode a `Delete` ('D') message.
-
-    Args:
-        payload: A complete pgoutput message payload.
-        relations: The cache of previously seen `Relation` messages, used
-            to resolve the message's relation OID to column names/order.
-        streaming: Whether a streaming bracket is currently
-            open, meaning a leading `Int32` subxact-id field is present and
-            must be decoded -- see `Delete.subxid`.
+    """Decode a `Delete` ('D') message, resolving `table` via `relations`.
 
     Returns:
-        The decoded `Delete`, with `table` resolved to `namespace.name`,
-        `old` keyed by real column names, and `subxid` set from the wire
-        when `streaming` is true.
+        The decoded `Delete`.
 
     Raises:
-        DecodeError: If `payload` has the wrong leading byte, is missing
-            both the key and old-row tuple markers, references a relation
-            OID not yet seen in `relations`, or a `TupleData` column count
-            doesn't match the cached relation's column count.
+        DecodeError: If both the key and old-row tuple markers are missing,
+            the relation OID hasn't been seen yet, or a `TupleData` column
+            count doesn't match the cached relation.
     """
     if payload[0:1] != b"D":
         message = "not a valid Delete message"
@@ -653,25 +587,16 @@ def decode_truncate(
     *,
     streaming: bool = False,
 ) -> Truncate:
-    """Decode a `Truncate` ('T') message.
+    """Decode a `Truncate` ('T') message, resolving `tables` via `relations`.
 
-    Args:
-        payload: A complete pgoutput message payload.
-        relations: The cache of previously seen `Relation` messages, used
-            to resolve each relation OID to a qualified table name.
-        streaming: Whether a streaming bracket is currently
-            open, meaning a leading `Int32` subxact-id field is present --
-            once, before the relation count, not once per relation -- and
-            must be decoded. See `Truncate.subxid`.
+    While streaming, the subxact-id field appears once before the relation
+    count, not once per relation.
 
     Returns:
-        The decoded `Truncate`, with `tables` resolved to `namespace.name`
-        in the order the OIDs appeared on the wire, and `subxid` set from
-        the wire when `streaming` is true.
+        The decoded `Truncate`.
 
     Raises:
-        DecodeError: If `payload` has the wrong leading byte, or references
-            a relation OID not yet seen in `relations`.
+        DecodeError: If a relation OID hasn't been seen yet in `relations`.
     """
     if payload[0:1] != b"T":
         message = "not a valid Truncate message"
@@ -701,13 +626,8 @@ def decode_truncate(
 def decode_type(payload: bytes, *, streaming: bool = False) -> Type:
     """Decode a `Type` ('Y') message.
 
-    Args:
-        payload: A complete pgoutput message payload.
-        streaming: Whether a streaming bracket is currently
-            open, meaning a leading `Int32 xid` field is present before the
-            type OID and must be skipped. Doesn't change the decoded value
-            -- `Type` never carries an xid -- only where the rest of the
-            message starts.
+    `streaming=True` means a leading `Int32 xid` field is present before the
+    type OID and must be skipped; `Type` never carries an xid itself.
 
     Returns:
         The decoded `Type`.
@@ -738,9 +658,6 @@ def decode_type(payload: bytes, *, streaming: bool = False) -> Type:
 def decode_origin(payload: bytes) -> Origin:
     """Decode an `Origin` ('O') message.
 
-    Args:
-        payload: A complete pgoutput message payload.
-
     Returns:
         The decoded `Origin`.
 
@@ -763,9 +680,6 @@ def decode_origin(payload: bytes) -> Origin:
 def decode_stream_start(payload: bytes) -> StreamStart:
     """Decode a `StreamStart` ('S') message.
 
-    Args:
-        payload: A complete pgoutput message payload.
-
     Returns:
         The decoded `StreamStart`.
 
@@ -784,9 +698,6 @@ def decode_stream_start(payload: bytes) -> StreamStart:
 def decode_stream_stop(payload: bytes) -> StreamStop:
     """Decode a `StreamStop` ('E') message.
 
-    Args:
-        payload: A complete pgoutput message payload.
-
     Returns:
         The decoded `StreamStop`.
 
@@ -803,14 +714,8 @@ def decode_stream_stop(payload: bytes) -> StreamStop:
 def decode_stream_commit(payload: bytes) -> StreamCommit:
     """Decode a `StreamCommit` ('c') message.
 
-    Args:
-        payload: A complete pgoutput message payload.
-
     Returns:
-        The decoded `StreamCommit`, carrying the same `commit_lsn`/
-        `end_lsn`/`commit_time` fields as an ordinary `Commit`, keyed by
-        `xid` instead of the implicit "whatever transaction `Begin` last
-        opened".
+        The decoded `StreamCommit`.
 
     Raises:
         DecodeError: If `payload` isn't exactly 30 bytes or has the wrong
@@ -820,7 +725,7 @@ def decode_stream_commit(payload: bytes) -> StreamCommit:
         message = "not a valid StreamCommit message"
         raise DecodeError(message, context=ErrorContext(message_type="StreamCommit"))
     xid = int.from_bytes(payload[1:5], "big")
-    # payload[5] is a reserved flags byte, always 0 -- skipped
+    # payload[5] is a reserved flags byte, always 0, skipped
     commit_lsn = int.from_bytes(payload[6:14], "big")
     end_lsn = int.from_bytes(payload[14:22], "big")
     commit_time = int.from_bytes(payload[22:30], "big")
@@ -835,12 +740,9 @@ def decode_stream_commit(payload: bytes) -> StreamCommit:
 def decode_stream_abort(payload: bytes) -> StreamAbort:
     """Decode a `StreamAbort` ('A') message.
 
-    Only the fixed 8-byte `(xid, subxid)` body is read -- `StreamAbort`'s
-    two further optional fields (an LSN and a timestamp) only appear under
+    Only the fixed 8-byte `(xid, subxid)` body is read. `StreamAbort`'s two
+    further optional fields (an LSN and a timestamp) only appear under
     `streaming 'parallel'` (protocol version 4), which is out of scope.
-
-    Args:
-        payload: A complete pgoutput message payload.
 
     Returns:
         The decoded `StreamAbort`.
@@ -879,13 +781,10 @@ _STREAMING_AWARE_RELATION_DECODERS: dict[
 class Decoder:
     """Stateful pgoutput decoder for one replication connection's lifetime.
 
-    Tracks the relation cache (row-change messages only make sense in light
-    of a previously-seen `Relation` message) and whether a streaming
-    bracket for some xid is currently open --
-    dispatching now depends on that flag (every Relation/Type/Insert/
+    Tracks the relation cache and whether a streaming bracket is currently
+    open. Dispatch depends on that flag, since every Relation/Type/Insert/
     Update/Delete/Truncate message gains a leading `Int32 xid` field while
-    a bracket is open), so it can no longer live in a free function that
-    doesn't hold it.
+    a bracket is open.
     """
 
     def __init__(self) -> None:
@@ -897,19 +796,14 @@ class Decoder:
         """Decode one pgoutput message payload, updating decoder state.
 
         A decoded `Relation` is both registered into the relation cache and
-        returned, so a `Relation` message is never silently dropped -- the
-        caller sees it like any other message and decides for itself that
-        it's schema-only.
-
-        Args:
-            payload: A complete pgoutput message payload.
+        returned, so the caller sees it like any other message.
 
         Returns:
             The decoded message.
 
         Raises:
-            DecodeError: If `payload`'s leading byte isn't one of the
-                thirteen supported message kinds.
+            DecodeError: If `payload`'s leading byte isn't a supported
+                message kind.
         """
         kind = payload[0:1]
         if kind == b"S":

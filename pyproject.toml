@@ -28,7 +28,7 @@ classifiers = [
     "Topic :: Database",
     "Typing :: Typed",
 ]
-dependencies = ["psycopg>=3.2"]
+dependencies = ["psycopg>=3.0,<4"]
 
 [project.urls]
 Homepage = "https://github.com/mochams/walbox"
@@ -50,7 +50,7 @@ dev = [
     "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.16.1",
-    "testcontainers[postgres]>=4.9",
+    "testcontainers[postgres]>=4.15",
 ]
 
 [tool.uv.build-backend]

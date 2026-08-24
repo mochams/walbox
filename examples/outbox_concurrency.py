@@ -1,30 +1,44 @@
 """Sharded, order-preserving concurrency on top of walbox's single consumer.
 
 walbox hands transactions to one handler, one at a time, in commit order
-(Backpressure, RFC 06) -- that's what keeps checkpointing simple and correct,
-but it also means a slow handler body processes everything it's given
-strictly sequentially unless the handler itself introduces concurrency.
+(Backpressure, RFC 06), which is what keeps checkpointing simple and
+correct. But it also means a slow handler body processes everything it's
+given strictly sequentially unless the handler itself introduces
+concurrency.
 
 This example fans the *changes inside one transaction* out across a fixed
-number of shard queues, each drained by its own worker task. Two events for
-different entities land on different shards and process concurrently; two
-events for the *same* entity always hash to the same shard and are drained
-strictly in order by that shard's single worker, so per-entity ordering
-survives no matter how many shards there are. `checkpoint.save()` only runs
-once every shard has drained everything this transaction just queued --
-walbox never has more than one `handle()` call in flight at a time, so a
-transaction that fans out across many shards makes that one call (and, if
-`close()` fires mid-flight, the graceful shutdown waiting on it) take
-proportionally longer. That's inherent to only checkpointing once the
-fan-out is confirmed done, not a bug: checkpointing any earlier would risk
-claiming durable progress for work that hasn't actually finished yet.
+number of shard queues, each drained by its own worker task. Events for
+different entities land on different shards and process concurrently;
+events for the *same* entity always hash to the same shard and drain
+strictly in order, so per-entity ordering survives no matter how many
+shards there are. `checkpoint.save()` only runs once every shard has
+drained everything this transaction just queued, so a transaction that
+fans out across many shards makes that one `handle()` call take
+proportionally longer. Checkpointing any earlier would risk claiming
+durable progress for work that hasn't actually finished.
 
-Requires `psycopg-pool` (`pip install psycopg-pool`) -- a separate package
+This only pays off when one transaction touches many different entities at
+once, e.g. a bulk insert or a backfill. A burst for a single entity gets no
+speedup, since its events all land on the same shard and still run one at a
+time. For the common case of one row inserted per commit, sharding adds
+queue and worker overhead for no benefit at all.
+
+A shard worker's `queue.join()` only tracks that every `put()` got a
+matching `task_done()`: it has no concept of success or failure. Without
+`self._failures`, a worker that logged a failure and moved on would let
+`handle()` checkpoint straight past a transaction that didn't fully
+succeed, silently losing whichever event failed. Instead `handle()` raises
+once every touched shard is drained, so a failure ends up exactly where a
+plain, unsharded handler's own exception would: propagated out of
+`client.run()`, checkpoint withheld, transaction redelivered after a
+restart.
+
+Requires `psycopg-pool` (`pip install psycopg-pool`), a separate package
 from `psycopg` itself. walbox's own dependency footprint stays at just
 `psycopg`; `from_pool` and this handler only need *something* shaped like a
 pool, so bringing one is the application's choice, not walbox's.
 
-Run these once, manually, against your database before running this script --
+Run these once, manually, against your database before running this script:
 walbox creates its replication slot idempotently, but never creates or alters
 the publication itself (see README.md's PostgreSQL configuration section):
 
@@ -66,7 +80,7 @@ async def publish_to_broker(payload: dict[str, Any]) -> None:
     logger.info("publishing: %s", payload)
 
 
-class ShardedHandler:
+class ConcurrentHandler:
     """Routes each outbox insert to one of `shard_count` FIFO shard queues.
 
     Routing key is a stable hash of `entity_id`, so the same entity always
@@ -78,7 +92,7 @@ class ShardedHandler:
         """Initialize with the shard count and each shard's queue bound.
 
         `queue_maxsize` bounds how many not-yet-processed events one shard
-        can hold before `handle()` blocks on `put()` -- a low value keeps
+        can hold before `handle()` blocks on `put()`: a low value keeps
         memory bounded under a slow `publish_to_broker`, same reasoning as
         walbox's own `max_pending_transactions`.
         """
@@ -87,6 +101,12 @@ class ShardedHandler:
             asyncio.Queue(maxsize=queue_maxsize) for _ in range(shard_count)
         ]
         self._workers: list[asyncio.Task[None]] = []
+        # `queue.join()` has no concept of success or failure: it's
+        # satisfied the instant `task_done()` is called, whether or not
+        # `_process_event` raised. Failures land here instead, so `handle`
+        # can check for them after `join()` returns and raise, rather than
+        # silently checkpointing a transaction that didn't fully succeed.
+        self._failures: list[BaseException] = []
 
     def start(self) -> None:
         """Start one worker task per shard. Call once, before `handle` runs."""
@@ -98,17 +118,14 @@ class ShardedHandler:
     async def stop(self, *, drain_timeout: float = 5.0) -> None:
         """Let in-flight shard work finish, then cancel and await every worker.
 
-        Call once, after `client.run` returns -- nothing can put new work onto
-        a shard queue by then, since only `handle` does that and it can't
-        still be running once `client.run` has returned or raised. On a
-        clean shutdown `handle`'s own `join()` calls already drained every
-        shard, so this resolves immediately; it earns its keep on the
-        *unclean* path (`client.run` raising mid-transaction), where a
-        worker could otherwise be cancelled mid-`_process_event` instead of
-        being allowed to finish what it already started. `drain_timeout`
-        bounds how long a genuinely stuck worker (e.g. a hung
-        `publish_to_broker`) can delay exit -- it's cancelled anyway once
-        that elapses.
+        Call once, after `client.run` returns: nothing can put new work onto
+        a shard queue by then, since only `handle` does that. On a clean
+        shutdown `handle`'s own `join()` calls already drained every shard,
+        so this resolves immediately; it earns its keep on the unclean path
+        (`client.run` raising mid-transaction), where a worker could
+        otherwise be cancelled mid-`_process_event` instead of finishing
+        what it started. `drain_timeout` bounds how long a genuinely stuck
+        worker can delay exit before it's cancelled anyway.
         """
         for shard in self._shards:
             with contextlib.suppress(TimeoutError):
@@ -137,9 +154,10 @@ class ShardedHandler:
     async def _shard_worker(self, shard_id: int) -> None:
         """Drain one shard's queue forever, one event at a time, in order.
 
-        A failure in `_process_event` is logged and the queue moves on to
-        the next item -- one bad event degrades that shard, it never kills
-        the worker task. A worker task that dies here would leave `join()`
+        A failure in `_process_event` is recorded in `self._failures` (so
+        `handle` can raise once every touched shard is drained) and the
+        queue moves on to the next item: one bad event never kills the
+        worker task. A worker task that died here would leave `join()`
         blocked forever on every future transaction, since nothing would be
         left to call `task_done()` for whatever it was holding.
         """
@@ -149,8 +167,14 @@ class ShardedHandler:
             payload = await queue.get()
             try:
                 await self._process_event(shard_id, payload)
-            except Exception:
-                logger.exception("shard %d failed to process an event", shard_id)
+            except Exception as exc:
+                logger.exception(
+                    "shard %d failed to process %s for entity %s",
+                    shard_id,
+                    payload.get("event_type", "unknown"),
+                    payload.get("entity_id", "unknown"),
+                )
+                self._failures.append(exc)
             finally:
                 queue.task_done()
 
@@ -166,7 +190,22 @@ class ShardedHandler:
         await publish_to_broker(payload)
 
     async def handle(self, tx: Transaction, checkpoint: CheckpointHandle) -> None:
-        """Fan this transaction's outbox inserts across shards, then checkpoint."""
+        """Fan this transaction's outbox inserts across shards, then checkpoint.
+
+        If any shard worker failed on an event from this transaction, raises
+        whatever `_process_event` raised (bundled into an `ExceptionGroup` if
+        more than one event failed) instead of silently checkpointing past
+        it. `checkpoint.save()` never runs in that case, so this transaction,
+        including whichever events did publish successfully, is redelivered
+        after a restart, the same at-least-once story as everywhere else in
+        this library. A real broker publish should dedupe on the outbox
+        row's own id (README.md's "Exactly-once effects" section) so
+        redelivery doesn't double up on events that already succeeded.
+
+        Raises:
+            ExceptionGroup: If one or more shard workers failed to process
+                an event from this transaction.
+        """
         touched_shards: set[int] = set()
         for change in tx.changes:
             if change.table != "public.outbox" or change.kind != ChangeKind.INSERT:
@@ -180,6 +219,11 @@ class ShardedHandler:
 
         for shard_id in touched_shards:
             await self._shards[shard_id].join()
+
+        if self._failures:
+            failures, self._failures = self._failures, []
+            message = f"{len(failures)} event(s) failed while processing xid {tx.xid}"
+            raise ExceptionGroup(message, failures)
 
         await checkpoint.save(tx.commit_lsn)
 
@@ -209,13 +253,13 @@ async def main() -> None:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, client.close)
 
-        sharded = ShardedHandler(shard_count=4)
-        sharded.start()
+        handler = ConcurrentHandler(shard_count=4)
+        handler.start()
 
         try:
-            await client.run(sharded.handle)
+            await client.run(handler.handle)
         finally:
-            await sharded.stop()
+            await handler.stop()
 
 
 if __name__ == "__main__":
