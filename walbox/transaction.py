@@ -1,17 +1,11 @@
 """Transaction assembly: pgoutput messages -> `abc.Transaction`.
 
 Buffers each open transaction's changes, keyed by xid, and emits an
-`abc.Transaction` the instant its `Commit`/`StreamCommit` arrives -- never
-before. Non-streamed transactions never interleave two transactions'
-messages on one slot's wire, so tracking exactly one open transaction at a
-time would be correct and sufficient for them alone. Streamed transactions
-break that invariant on purpose: Postgres can (and, to avoid buffering a
-huge transaction whole server-side, does) interleave a streamed
-transaction's chunks with other transactions -- ordinary ones, and other
-streamed ones -- so `self._pending` generalizes the single slot to a
-`dict[xid, _Pending]`. A run with no streaming simply never has more than
-one key in it at a time, so this handles both cases uniformly at no extra
-cost.
+`abc.Transaction` as soon as its `Commit`/`StreamCommit` arrives. A
+non-streamed slot never has more than one transaction open at a time, but
+Postgres can interleave a streamed transaction's chunks with others to
+avoid buffering a huge transaction whole server-side. `self._pending`
+tracks every open xid in a `dict` to handle both cases uniformly.
 """
 
 import logging
@@ -43,28 +37,17 @@ logger = logging.getLogger("walbox.transaction")
 class _Pending:
     """Mutable accumulator for one xid's changes while its transaction is open.
 
-    `final_lsn` is set from `Begin.final_lsn` for an ordinary (non-streamed)
-    transaction, cross-checked against `Commit.commit_lsn` in `_finish`. It
-    is `None` for a streamed transaction's bucket: streaming brackets are
-    opened by `StreamStart`, which carries no such field (Postgres doesn't
-    know a streamed transaction's final LSN until it actually commits --
-    that's the reason it's streamed instead of buffered whole), so no
-    equivalent cross-check is possible there.
+    `final_lsn` comes from `Begin.final_lsn` and is cross-checked against
+    `Commit.commit_lsn` in `_finish`. It's `None` for a streamed
+    transaction's bucket, since Postgres doesn't know a streamed
+    transaction's final LSN until it commits.
 
     `subxact_boundaries` maps a subtransaction id to the index in `changes`
-    where that subtransaction's changes first begin. Every row-change
-    message carries its own (sub)transaction's id while streaming
-    (`Insert.subxid` and friends) -- since a subtransaction's
-    changes are always contiguous (nothing outside its scope can be
-    interleaved while it's open), that first index is also where *all* of
-    its changes (and any nested inside it) end: on a subxid-scoped
-    `StreamAbort`, truncating `changes` back to that index discards exactly
-    the right ones and nothing else. This is the same technique PostgreSQL's
-    own logical replication apply worker uses (`worker.c`'s
-    `stream_abort_internal`, truncating a per-transaction spool file back to
-    a recorded byte offset) -- here, a list index plays the role of that
-    offset. Empty for a non-streamed transaction, since only streamed
-    row-change messages carry a subxid at all.
+    where that subtransaction's changes begin. Because a subtransaction's
+    changes are always contiguous, truncating `changes` back to that index
+    on a subxid-scoped `StreamAbort` discards exactly the right ones. Empty
+    for a non-streamed transaction, since only streamed row-change messages
+    carry a subxid.
     """
 
     changes: list[ChangeEvent] = field(default_factory=list)
@@ -75,14 +58,12 @@ class _Pending:
 class TransactionAssembler:
     """Assembles decoded pgoutput messages into complete `Transaction`s.
 
-    Call `feed` once per decoded message; it returns the assembled
-    `Transaction` the moment a `Commit` or `StreamCommit` completes it, and
-    `None` for every other message. Multiple xids can be buffered at once
-    (`self._pending`), but at most one *ordinary* (non-streamed) transaction
-    and one *actively receiving* streaming bracket can be open at any given
-    moment -- `self._current_xid`/`self._active_stream_xid` track which
-    pending bucket a bare `Insert`/`Update`/`Delete`/`Truncate`/`Commit`
-    (none of which carry the top-level xid once decoded) belongs to.
+    Call `feed` once per decoded message. It returns the assembled
+    `Transaction` when a `Commit` or `StreamCommit` completes it, and `None`
+    otherwise. Multiple xids can be buffered at once (`self._pending`), but
+    at most one ordinary transaction and one actively-streaming bracket can
+    be open at a time; `self._current_xid` and `self._active_stream_xid`
+    track which pending bucket a bare row-change message belongs to.
     """
 
     def __init__(self) -> None:
@@ -92,22 +73,16 @@ class TransactionAssembler:
         self._active_stream_xid: int | None = None
 
     def feed(self, message: PgoutputMessage) -> Transaction | None:
-        """Consume one decoded pgoutput message.
+        """Consume one decoded pgoutput message, in wire order.
 
-        Args:
-            message: The next decoded message in wire order.
+        `client.py` filters out `Type`/`Origin` before calling this.
 
         Returns:
-            The assembled `Transaction` the instant a `Commit` or
-            `StreamCommit` completes it, otherwise `None`.
+            The assembled `Transaction` when a `Commit` or `StreamCommit`
+            completes it, otherwise `None`.
 
         Raises:
-            AssertionError: If `message` is a `Type` or `Origin`, or
-                otherwise not one of the variants handled above. Type/Origin
-                are members of `PgoutputMessage` but never reach `feed()` in
-                normal operation -- `client.py` logs and discards them
-                before calling it, so this only fires if that filtering is
-                ever bypassed.
+            AssertionError: If `message` is a variant not handled above.
         """
         match message:
             case Begin():
@@ -126,7 +101,7 @@ class TransactionAssembler:
                 pass  # schema-only; already applied by pgoutput.Decoder
             case StreamStart() | StreamStop() | StreamCommit() | StreamAbort():
                 return self._feed_stream_message(message)
-            case _:  # pragma: no cover -- Type/Origin are filtered out by
+            case _:  # pragma: no cover, Type/Origin are filtered out by
                 # client.py before reaching feed(); anything else is a bug.
                 unreachable = f"unhandled pgoutput message type {message!r}"
                 raise AssertionError(unreachable)
@@ -138,18 +113,13 @@ class TransactionAssembler:
     ) -> Transaction | None:
         """Dispatch one of the four streaming message kinds.
 
-        Split out of `feed` purely to keep `feed`'s own branching within
-        this project's complexity limits -- streaming support added four new
-        message kinds to what was already a multi-way dispatch.
-
         Returns:
-            The assembled `Transaction` if `message` is a `StreamCommit`,
-            otherwise `None`.
+            The assembled `Transaction` for a `StreamCommit`, otherwise
+            `None`.
 
         Raises:
-            AssertionError: Never in practice -- `message`'s type is
-                exhaustive over the four streaming kinds; this only fires
-                if that's ever bypassed.
+            AssertionError: If `message` isn't one of the four streaming
+                kinds.
         """
         match message:
             case StreamStart():
@@ -160,7 +130,7 @@ class TransactionAssembler:
                 return self.stream_commit(message)
             case StreamAbort():
                 self.stream_abort(message)
-            case _:  # pragma: no cover -- exhaustive over the four streaming kinds
+            case _:  # pragma: no cover, exhaustive over the four streaming kinds
                 unreachable = f"unhandled streaming message type {message!r}"
                 raise AssertionError(unreachable)
         return None
@@ -185,13 +155,8 @@ class TransactionAssembler:
     def _active_xid(self, message_kind: str) -> int:
         """Resolve which pending bucket a bare change message belongs to.
 
-        Once decoded, `Insert`/`Update`/`Delete`/`Truncate` carry no
-        *top-level* xid of their own -- while streaming they carry
-        `subxid`, the specific (sub)transaction's own id, but never the
-        enclosing bracket's xid, and outside streaming they carry no xid at
-        all -- so this falls back from "the streaming bracket currently
-        receiving messages", if any, to "the one open ordinary
-        transaction", if any.
+        Falls back from the streaming bracket currently receiving messages,
+        if any, to the one open ordinary transaction, if any.
 
         Returns:
             The resolved xid.
@@ -213,7 +178,7 @@ class TransactionAssembler:
         *,
         subxid: int | None,
     ) -> None:
-        if xid not in self._pending:  # pragma: no cover -- _active_xid already
+        if xid not in self._pending:  # pragma: no cover, _active_xid already
             # guarantees a resolved xid has a `_pending` entry; this guards
             # `_append_change` itself against future misuse, not a path
             # reachable through `feed()` today.
@@ -296,14 +261,10 @@ class TransactionAssembler:
     def stream_start(self, message: StreamStart) -> None:
         """Open (`first_segment=True`) or resume a streamed transaction's bucket.
 
-        `first_segment` is validated, not ignored: a `first_segment=True`
-        for an already-open xid, or `first_segment=False` for an xid with
-        no open bucket, both indicate a protocol desync and raise
-        immediately rather than silently accumulating into the wrong
-        bucket.
-
         Raises:
-            ProtocolError: On either desync described above.
+            ProtocolError: On a `first_segment=True` for an already-open
+                xid, or `first_segment=False` for an xid with no open
+                bucket. Both indicate a protocol desync.
         """
         if message.first_segment:
             if message.xid in self._pending:
@@ -350,22 +311,13 @@ class TransactionAssembler:
     def stream_abort(self, message: StreamAbort) -> None:
         """Discard exactly the changes a `StreamAbort` invalidates.
 
-        `subxid == xid` is a full-transaction rollback -- the common case,
-        e.g. the client issued `ROLLBACK` rather than `ROLLBACK TO
-        SAVEPOINT` -- handled like discarding a speculative buffer that
-        turned out not to be needed.
-
-        `subxid != xid` is a savepoint-level rollback. Every row-change
-        message carries its own (sub)transaction's id while streaming
-        (`Insert.subxid` and friends), so the first change
-        recorded under `subxid` (`_Pending.subxact_boundaries`) marks
-        exactly where that savepoint's changes begin in the buffer --
-        everything from there to the end belongs to it, or to a savepoint
-        nested inside it (which `ROLLBACK TO SAVEPOINT` discards too), so
-        truncating back to that point discards precisely the right changes
-        and nothing else. A `subxid` that never produced a change (e.g. an
-        empty `SAVEPOINT ...; ROLLBACK TO SAVEPOINT ...;`) has no recorded
-        boundary, so there is nothing to discard.
+        `subxid == xid` is a full-transaction rollback: the whole bucket is
+        dropped. `subxid != xid` is a savepoint-level rollback: everything
+        recorded from that subxid's first change onward (in
+        `_Pending.subxact_boundaries`) is truncated away, since a
+        subtransaction's changes are always contiguous. A `subxid` that
+        never produced a change has no recorded boundary, so there's
+        nothing to discard.
         """
         if message.subxid == message.xid:
             self._pending.pop(message.xid, None)
@@ -376,7 +328,7 @@ class TransactionAssembler:
         pending = self._pending.get(message.xid)
         if pending is None:
             # A subtransaction abort for a top-level xid we have no bucket
-            # for at all -- e.g. it already closed via a prior full abort or
+            # for at all, e.g. it already closed via a prior full abort or
             # StreamCommit. Nothing to discard.
             return
         boundary = pending.subxact_boundaries.pop(message.subxid, None)
@@ -389,7 +341,7 @@ class TransactionAssembler:
         discarded = len(pending.changes) - boundary
         del pending.changes[boundary:]
         # Any boundary recorded inside the discarded region belonged to a
-        # savepoint nested within the one just aborted -- already discarded
+        # savepoint nested within the one just aborted, already discarded
         # along with it, so its own record is now stale.
         stale = [
             subxid
@@ -412,17 +364,9 @@ class TransactionAssembler:
     ) -> Transaction:
         """Shared emission path: accumulated changes + Commit -> Transaction.
 
-        Used by both `_finish` (an ordinary `Commit`) and `stream_commit` (a
-        `StreamCommit`) -- `StreamCommit` carries the same `end_lsn`/
-        `commit_time` fields under the same names, so no signature
-        widening beyond the type hint is needed.
-
-        Args:
-            xid: The transaction's ID, from `Begin.xid` or `StreamCommit.xid`.
-            changes: The changes accumulated for this transaction, in
-                wire order.
-            commit: The `Commit`/`StreamCommit` message that completed the
-                transaction.
+        Used by both `_finish` (an ordinary `Commit`) and `stream_commit`
+        (a `StreamCommit`), which share the same `end_lsn`/`commit_time`
+        field names.
 
         Returns:
             The assembled `Transaction`.
@@ -430,12 +374,12 @@ class TransactionAssembler:
         return Transaction(
             xid=xid,
             # commit.end_lsn is "the end of the commit record + 1" (Postgres's
-            # own reorderbuffer.h) -- already in the wire protocol's "+1"
+            # own reorderbuffer.h), already in the wire protocol's "+1"
             # form. Every other LSN this codebase tracks is kept as a raw,
             # un-adjusted position, with "+1" applied exactly once at final
             # wire-encoding time, so subtracting 1 here converts end_lsn into
             # that same raw convention. commit.commit_lsn is the *start* of
-            # the commit record, not its end -- using it would make walbox
+            # the commit record, not its end: using it would make walbox
             # report having durably processed less than it actually has,
             # causing PostgreSQL to resend this transaction on every
             # reconnect. This matches PostgreSQL's own logical replication

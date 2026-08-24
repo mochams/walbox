@@ -1,6 +1,6 @@
 """Runnable transactional-outbox example built on walbox.
 
-Run these once, manually, against your database before running this script --
+Run these once, manually, against your database before running this script:
 walbox creates its replication slot idempotently, but never creates or alters
 the publication itself (see README.md's PostgreSQL configuration section):
 
@@ -45,15 +45,13 @@ async def handle(tx: Transaction, checkpoint: CheckpointHandle) -> None:
     README.md's failure-semantics table), so a real broker publish should
     dedupe on `payload["id"]`, the outbox row's natural event ID.
 
-    `checkpoint.save(tx.commit_lsn)` below is called with no `connection=`,
-    so it always opens its own connection and commits immediately (see
-    `PostgresCheckpointStore.save`) -- it can never be atomic with anything
-    else this handler does. That's fine here because the broker is an
-    external system that could never share a Postgres transaction anyway, so
-    redelivery-with-dedupe is the only available correctness strategy. When
-    the downstream write is itself Postgres, see
-    [`outbox_postgres.py`](outbox_postgres.py) instead, which gets real
-    atomicity by passing its own connection into `checkpoint.save`.
+    `checkpoint.save(tx.commit_lsn)` is called with no `connection=`, so it
+    always opens its own connection and commits immediately: it can never be
+    atomic with anything else this handler does. That's fine here since the
+    broker is external and could never share a Postgres transaction anyway,
+    so redelivery-with-dedupe is the only available correctness strategy.
+    See [`outbox_postgres.py`](outbox_postgres.py) for real atomicity when
+    the downstream write is itself Postgres.
     """
     for change in tx.changes:
         if change.table != "public.outbox" or change.kind != ChangeKind.INSERT:

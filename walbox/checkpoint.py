@@ -25,10 +25,9 @@ class ConnectionPool(Protocol):
     """Structural shape of a Postgres connection pool.
 
     Matches `psycopg_pool.AsyncConnectionPool` (an async context manager
-    that checks out a connection and returns it to the pool on exit), but
-    is never imported from `psycopg_pool` -- any object shaped like this
-    works, so accepting one via `PostgresCheckpointStore.from_pool` doesn't
-    add a dependency beyond `psycopg` itself.
+    that checks out a connection and returns it on exit), but is never
+    imported from `psycopg_pool`. Any object shaped like this works, so
+    `PostgresCheckpointStore.from_pool` adds no dependency beyond `psycopg`.
     """
 
     def connection(self) -> AbstractAsyncContextManager[AsyncConnection[Any]]:
@@ -81,8 +80,8 @@ class FileCheckpointStore:
     ) -> None:
         """Durably persist `lsn`.
 
-        `connection` is accepted (to satisfy the `CheckpointStore` Protocol)
-        and ignored -- a plain file can never join a Postgres transaction.
+        `connection` is accepted, to satisfy the `CheckpointStore` protocol,
+        and ignored: a plain file can't join a Postgres transaction.
         """
         started_at = time.monotonic()
         await asyncio.to_thread(self._save_sync, lsn)
@@ -112,17 +111,15 @@ class FileCheckpointStore:
 class PostgresCheckpointStore:
     """A `CheckpointStore` backed by a row in a Postgres table.
 
-    Its entire reason to exist is that `save` can join a *caller-supplied*
-    connection's transaction (via `connection=`) instead of always opening
-    its own -- letting an application commit its own sink write and the
-    checkpoint update atomically in one transaction, something a
-    `FileCheckpointStore` can never do.
+    `save(connection=...)` can join a caller-supplied connection's
+    transaction instead of opening its own, letting an application commit
+    its own sink write and the checkpoint update atomically in one
+    transaction, something a `FileCheckpointStore` can't do.
 
-    `load()` and `save()` without `connection=` open one ad hoc connection
-    per call by default -- fine for checkpointing's inherently low call
-    volume (once per transaction at most). A throughput-sensitive consumer
-    that finds this overhead worth avoiding can build via `from_pool`
-    instead, which reuses a connection pool the application already manages.
+    Without `connection=`, `load()` and `save()` open one ad hoc connection
+    per call, which is fine for checkpointing's low call volume. Use
+    `from_pool` instead to reuse a connection pool the application already
+    manages.
     """
 
     def __init__(
@@ -134,11 +131,10 @@ class PostgresCheckpointStore:
     ) -> None:
         """Initialize with the DSN to connect with and the consumer to track.
 
-        `table` is only ever a trusted, developer-supplied identifier (never
-        end-user input), so it's safely composed into SQL via
-        `psycopg.sql.Identifier` (imported here as `sql.Identifier`) rather
-        than passed as a bind parameter -- Postgres doesn't allow
-        parameterizing table names.
+        `table` must be a trusted, developer-supplied identifier, never
+        end-user input: Postgres doesn't allow parameterizing table names,
+        so it's composed into SQL via `sql.Identifier` instead of a bind
+        parameter.
         """
         self._acquire: _Acquire = lambda: _connect(dsn)
         self._configure(consumer_name=consumer_name, table=table)
@@ -153,19 +149,16 @@ class PostgresCheckpointStore:
     ) -> "PostgresCheckpointStore":
         """Build a store whose ad hoc `load()`/`save()` calls reuse `pool`.
 
-        `pool` is never connected to or closed here -- it's the
-        application's, created and owned outside this store, exactly like
-        `dsn` is just a string the default constructor doesn't own either.
-        This only changes where connections for `load()` and connection-less
-        `save()` calls come from; `save(lsn, connection=conn)`'s
-        same-transaction pattern is untouched; it already uses whatever
-        connection the caller passes in, pool or not.
+        `pool` is owned by the application; it's never connected to or
+        closed here. This only changes where connections for `load()` and
+        connection-less `save()` calls come from. `save(lsn, connection=...)`
+        already uses whatever connection the caller passes in, pool or not.
 
         Returns:
             A `PostgresCheckpointStore` backed by `pool`.
         """
         store = cls.__new__(cls)
-        store._acquire = pool.connection  # ruff: ignore[private-member-access] -- alternate constructor
+        store._acquire = pool.connection  # ruff: ignore[private-member-access]: alternate constructor
         store._configure(consumer_name=consumer_name, table=table)  # ruff: ignore[private-member-access]
         return store
 
@@ -202,13 +195,11 @@ class PostgresCheckpointStore:
     ) -> None:
         """Durably persist `lsn` as the new replay position for this consumer.
 
-        If `connection` is given, the upsert (and, on first use, the backing
-        table's creation) is executed on it and left uncommitted -- the
-        caller owns the transaction boundary, so this can become durable
-        atomically together with whatever else the caller writes on that
-        same connection. Without `connection`, this acquires its own
-        connection (a fresh one, or one from `from_pool`'s pool) and commits
-        immediately.
+        If `connection` is given, the upsert (and, on first use, the
+        backing table's creation) runs on it and is left uncommitted, so the
+        caller's own commit makes it durable atomically with whatever else
+        it writes on that connection. Without `connection`, this acquires
+        its own connection and commits immediately.
         """
         started_at = time.monotonic()
         if connection is not None:
@@ -229,13 +220,11 @@ class PostgresCheckpointStore:
     async def _ensure_schema(self, conn: AsyncConnection[Any]) -> None:
         """Create the backing table if needed, without committing.
 
-        Left uncommitted deliberately: `CREATE TABLE IF NOT EXISTS` is
-        transactional in Postgres, so it's safe to run on a caller-supplied
-        `save(connection=...)` connection and let the caller's own commit
-        (or the own-connection paths' `async with`/explicit commit) persist
-        it -- committing here would durably commit the caller's in-progress
-        transaction early, breaking the same-transaction guarantee `save`'s
-        `connection=` parameter exists to provide.
+        `CREATE TABLE IF NOT EXISTS` is transactional in Postgres, so this
+        is safe to run on a caller-supplied `save(connection=...)` connection
+        and leave for the caller's own commit. Committing here would commit
+        the caller's in-progress transaction early, breaking the
+        same-transaction guarantee `connection=` exists to provide.
         """
         if self._schema_ready:
             return

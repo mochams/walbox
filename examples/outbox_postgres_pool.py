@@ -4,30 +4,30 @@ Identical to outbox_postgres.py's atomic same-transaction pattern, except the
 handler checks out its connection from an application-managed
 `psycopg_pool.AsyncConnectionPool` instead of opening a fresh connection per
 transaction, and `PostgresCheckpointStore` is built via `from_pool` against
-that same pool -- so the only connection this script opens outside the pool
+that same pool, so the only connection this script opens outside the pool
 is the replication connection itself. See
 [RFC 01](../docs/rfc-01-checkpoint-store.md) for why `from_pool` exists.
 
 The handler needs the pool at call time, but `ReplicationClient.run()` always
-calls its handler with a single `(Transaction, CheckpointHandle)` pair --
+calls its handler with a single `(Transaction, CheckpointHandle)` pair, so
 `functools.partial` is how `pool` gets bound ahead of time, the same way
 outbox_postgres.py binds `dsn`.
 
-Worth being precise about: since this handler always passes `connection=conn`
-to `checkpoint.save`, `PostgresCheckpointStore`'s own pooled `_acquire` is
-never exercised by `save()` here -- only by `ReplicationClient.run()`'s one
-`load()` call at startup. The per-transaction connection reuse visible below
-comes from the handler checking out `pool.connection()` directly, which
-doesn't depend on `from_pool` at all. `from_pool` earns its keep on *every*
-transaction in `outbox_pool.py` instead, whose handler calls
+One nuance: since this handler always passes `connection=conn` to
+`checkpoint.save`, `PostgresCheckpointStore`'s own pooled `_acquire` is never
+exercised by `save()` here, only by `ReplicationClient.run()`'s one `load()`
+call at startup. The per-transaction connection reuse below comes from the
+handler checking out `pool.connection()` directly, independent of
+`from_pool`. `from_pool` earns its keep on *every* transaction in
+`outbox_pool.py` instead, whose handler calls
 `checkpoint.save(tx.commit_lsn)` with no `connection=`.
 
-Requires `psycopg-pool` (`pip install psycopg-pool`) -- a separate package
+Requires `psycopg-pool` (`pip install psycopg-pool`), a separate package
 from `psycopg` itself. walbox's own dependency footprint stays at just
 `psycopg`; `from_pool` and this handler only need *something* shaped like a
 pool, so bringing one is the application's choice, not walbox's.
 
-Run these once, manually, against your database before running this script --
+Run these once, manually, against your database before running this script:
 walbox creates its replication slot idempotently, but never creates or alters
 the publication itself (see README.md's PostgreSQL configuration section):
 
@@ -42,7 +42,7 @@ CREATE TABLE outbox (
 
 CREATE PUBLICATION walbox_pub FOR TABLE outbox;
 
--- The downstream Postgres sink this example writes to -- a projection built
+-- The downstream Postgres sink this example writes to: a projection built
 -- from outbox inserts, entirely separate from the outbox table itself.
 CREATE TABLE outbox_projection (
     entity_type TEXT NOT NULL,
@@ -80,7 +80,7 @@ async def handle(
 ) -> None:
     """Write to `outbox_projection` and checkpoint in one Postgres commit.
 
-    Same pattern as outbox_postgres.py's handler -- `checkpoint.save`'s
+    Same pattern as outbox_postgres.py's handler: `checkpoint.save`'s
     `connection=` is what makes the downstream write and the checkpoint
     atomic, regardless of where `conn` came from. The only difference here
     is `conn` comes from `pool.connection()` (checked out for this

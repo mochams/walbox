@@ -2,7 +2,7 @@
 
 See README.md's "Exactly-once effects" section for the pattern this
 demonstrates. Run these once, manually, against your database before running
-this script -- walbox creates its replication slot idempotently, but never
+this script: walbox creates its replication slot idempotently, but never
 creates or alters the publication itself (see README.md's PostgreSQL
 configuration section):
 
@@ -17,7 +17,7 @@ CREATE TABLE outbox (
 
 CREATE PUBLICATION walbox_pub FOR TABLE outbox;
 
--- The downstream Postgres sink this example writes to -- a projection built
+-- The downstream Postgres sink this example writes to: a projection built
 -- from outbox inserts, entirely separate from the outbox table itself.
 CREATE TABLE outbox_projection (
     entity_type TEXT NOT NULL,
@@ -55,14 +55,14 @@ async def handle(
     """Write to `outbox_projection` and checkpoint in one Postgres commit.
 
     `PostgresCheckpointStore.save` only skips committing when it's given a
-    `connection=` -- passed here, so the upsert runs uncommitted on `conn`
-    instead of on a throwaway connection of its own. That's the *only* way to
+    `connection=`, passed here so the upsert runs uncommitted on `conn`
+    instead of on a throwaway connection of its own. That's the only way to
     get a downstream Postgres write and the checkpoint into the same commit:
     a crash between them is impossible, either both happened or neither did.
 
     Reach for this shape instead of `outbox.handle`'s whenever "publish"
     means writing to another table in this same database (e.g. a
-    projection), rather than an external broker -- only a Postgres write can
+    projection), rather than an external broker: only a Postgres write can
     share a transaction with the checkpoint this way.
     """
     async with await psycopg.AsyncConnection.connect(dsn) as conn:

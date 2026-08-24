@@ -6,12 +6,12 @@ once per transaction, with no `connection=`) reuses a connection from an
 application-managed pool instead of opening a fresh one every time. See
 [RFC 01](../docs/rfc-01-checkpoint-store.md) for why `from_pool` exists.
 
-Requires `psycopg-pool` (`pip install psycopg-pool`) -- a separate package
+Requires `psycopg-pool` (`pip install psycopg-pool`), a separate package
 from `psycopg` itself. walbox's own dependency footprint stays at just
 `psycopg`; `from_pool` only needs *something* shaped like a pool, so
 bringing one is the application's choice, not walbox's.
 
-Run these once, manually, against your database before running this script --
+Run these once, manually, against your database before running this script:
 walbox creates its replication slot idempotently, but never creates or alters
 the publication itself (see README.md's PostgreSQL configuration section):
 
@@ -54,7 +54,7 @@ async def publish_to_broker(payload: dict[str, Any]) -> None:
 async def handle(tx: Transaction, checkpoint: CheckpointHandle) -> None:
     """Publish each outbox insert, then durably checkpoint the transaction.
 
-    Word-for-word the same as outbox.py's `handle` -- the pool lives inside
+    Word-for-word the same as outbox.py's `handle`: the pool lives inside
     `checkpoint`'s underlying `PostgresCheckpointStore`, so this handler
     doesn't need to know or care that one is in play. Swapping a plain
     `PostgresCheckpointStore(dsn, ...)` for `from_pool(pool, ...)` in

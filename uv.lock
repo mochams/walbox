@@ -720,7 +720,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "psycopg", specifier = ">=3.2" }]
+requires-dist = [{ name = "psycopg", specifier = ">=3.0,<4" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -735,7 +735,7 @@ dev = [
     { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = ">=0.16.1" },
-    { name = "testcontainers", extras = ["postgres"], specifier = ">=4.9" },
+    { name = "testcontainers", extras = ["postgres"], specifier = ">=4.15" },
 ]
 
 [[package]]

@@ -2,17 +2,13 @@
 
 `ReplicationTransport` opens a libpq replication connection, idempotently
 creates the replication slot, issues `START_REPLICATION`, and drives the
-COPY BOTH stream -- for the entire connection lifetime -- through libpq's
-own COPY functions, exposed via Psycopg 3's `connection.pgconn`. asyncio's
-only role anywhere in this module is to wait for the connection's file
-descriptor to become readable or writable; libpq remains the sole owner of
-the socket, its buffering, and (if negotiated) TLS, for the whole
-connection -- this is what keeps replication traffic working over a TLS
-connection at all, since bypassing libpq's own I/O functions would mean
-reading and writing raw ciphertext. No `socket.socket` is ever constructed
-around `pgconn.socket`, and no `recv`/`send`/`sock_recv`/`sock_sendall` call
-appears anywhere here -- `pgconn.socket` is used exclusively as a readiness
-token for `loop.add_reader`/`add_writer`.
+COPY BOTH stream through libpq's own COPY functions, exposed via Psycopg
+3's `connection.pgconn`. asyncio's only role here is waiting for the
+connection's file descriptor to become readable or writable; libpq stays
+the sole owner of the socket, its buffering, and TLS, which is what keeps
+replication traffic working over TLS at all. `pgconn.socket` is used only
+as a readiness token for `loop.add_reader`/`add_writer`, never wrapped in a
+`socket.socket` or read/written directly.
 """
 
 import asyncio
@@ -38,20 +34,14 @@ _DUPLICATE_OBJECT_SQLSTATE = "42710"
 def _format_lsn(lsn: int) -> str:
     """Render an LSN as PostgreSQL's hex `XXXXXXXX/XXXXXXXX` text form.
 
-    Args:
-        lsn: The LSN to render.
-
     Returns:
-        The hex `XXXXXXXX/XXXXXXXX` text form.
+        The hex text form.
     """
     return f"{lsn >> 32:X}/{lsn & 0xFFFFFFFF:X}"
 
 
 def _parse_lsn(text: str) -> int:
     """Parse PostgreSQL's hex `XXXXXXXX/XXXXXXXX` LSN text form to an int.
-
-    Args:
-        text: The hex `XXXXXXXX/XXXXXXXX` text form to parse.
 
     Returns:
         The parsed LSN.
@@ -63,7 +53,7 @@ def _parse_lsn(text: str) -> int:
 class ReplicationTransport:
     """Drives one PostgreSQL logical replication connection end to end.
 
-    Owns exactly one `AsyncConnection` for its entire lifetime -- connection
+    Owns exactly one `AsyncConnection` for its entire lifetime. Connection
     setup, slot creation, `START_REPLICATION`, the COPY BOTH read/write
     loop, and teardown all go through the same `pgconn`, never a raw socket.
     """
@@ -163,7 +153,7 @@ class ReplicationTransport:
             finally:
                 # The loser of the race (or, if this coroutine itself gets
                 # cancelled here, both) must be cancelled *and awaited*, not
-                # just fired-and-forgotten -- otherwise its own
+                # just fired-and-forgotten. Otherwise its own
                 # `_wait_readable`/`_wait_writable` never reaches its
                 # `finally` and leaks a stale `loop.add_reader`/`add_writer`
                 # registration on this connection's fd, which can collide
@@ -245,9 +235,6 @@ class ReplicationTransport:
     async def start_replication(self, start_lsn: int) -> None:
         """Issue `START_REPLICATION` and enter COPY BOTH mode.
 
-        Args:
-            start_lsn: The LSN to start streaming from.
-
         Raises:
             ReplicationConnectionError: If the server does not enter
                 COPY BOTH mode.
@@ -302,10 +289,8 @@ class ReplicationTransport:
     async def read(self) -> bytes:
         """Return one complete replication message payload.
 
-        Returns:
-            An `XLogData` ('w') or `PrimaryKeepaliveMessage` ('k') payload,
-            with the outer CopyData envelope already stripped by libpq.
-            Never partial; the caller needs no buffering.
+        The outer CopyData envelope is already stripped by libpq, and the
+        result is never partial: the caller needs no buffering.
 
         Raises:
             ReplicationConnectionError: If the stream ends or an error
@@ -338,20 +323,18 @@ class ReplicationTransport:
                     context=ErrorContext(slot=self._slot_name),
                 )
             # nbytes == 0: no complete row yet. PQgetCopyData's own documented
-            # contract -- wait for read-ready, then consume_input, then retry.
+            # contract: wait for read-ready, then consume_input, then retry.
             # (A negative-error result other than -1 surfaces as an
             # OperationalError from get_copy_data itself, not as a return
-            # value here -- see Psycopg 3's own wrapper.)
+            # value here; see Psycopg 3's own wrapper.)
             await self._wait_readable()
             pgconn.consume_input()
 
     async def write(self, payload: bytes) -> None:
         """Send one bare replication-protocol payload during COPY BOTH.
 
-        Args:
-            payload: The bare payload (e.g. an `encode_standby_status_update`
-                result). Do not pre-wrap in a CopyData envelope --
-                `put_copy_data` does that.
+        `payload` must not be pre-wrapped in a CopyData envelope;
+        `put_copy_data` does that.
 
         Raises:
             ReplicationConnectionError: If sending fails.

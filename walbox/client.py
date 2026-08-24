@@ -2,11 +2,11 @@
 
 Wires `transport.py`, `protocol.py`, `pgoutput.py`, and `transaction.py`
 together into two long-lived tasks under one `asyncio.TaskGroup`: a receiver
-(socket -> protocol -> pgoutput -> transaction assembly -> enqueue onto a
-bounded queue) and a consumer (dequeue -> handler -> checkpoint). Splitting
-the two means a slow `handler` can no longer block PostgreSQL
-keepalive/feedback traffic -- the receiver keeps servicing the socket and
-sending status updates even while backpressured on a full queue.
+(socket, protocol, pgoutput, transaction assembly, enqueue onto a bounded
+queue) and a consumer (dequeue, handler, checkpoint). Splitting the two
+means a slow `handler` can't block PostgreSQL keepalive and feedback
+traffic; the receiver keeps servicing the socket and sending status updates
+even while backpressured on a full queue.
 """
 
 import asyncio
@@ -47,11 +47,8 @@ _T = TypeVar("_T")
 def _next_backoff_value(current: float) -> float:
     """Double `current`, capped at `_MAX_BACKOFF`.
 
-    Args:
-        current: The backoff delay, in seconds, that was just used.
-
     Returns:
-        The next delay to use, in seconds.
+        The next backoff delay, in seconds.
     """
     return min(current * 2, _MAX_BACKOFF)
 
@@ -98,14 +95,12 @@ class ReplicationClient:
     def close(self) -> None:
         """Signal the running client to stop.
 
-        Safe to call directly from `loop.add_signal_handler`, which invokes
-        plain callbacks, never coroutines. Does no I/O itself -- it only
-        flips state the receiver and consumer tasks already observe on
-        their own: shutting down `self._queue` immediately unblocks a
-        receiver stuck on a full-queue `put()` or a consumer idle on an
-        empty `get()`. Turning that unblock into an orderly, non-raising
-        exit is `run()`'s own job elsewhere in this class; `close()` alone
-        still surfaces as an exception out of `run()`.
+        Safe to call directly from `loop.add_signal_handler`, since it's a
+        plain callback rather than a coroutine. Does no I/O: it just sets
+        `_closing` and shuts down `self._queue`, which unblocks a receiver
+        stuck on a full-queue `put()` or a consumer idle on an empty
+        `get()`. Turning that into a clean, non-raising exit is `run()`'s
+        job elsewhere in this class.
         """
         logger.info("shutdown requested", extra={"slot": self.options.slot_name})
         self._closing.set()
@@ -114,19 +109,15 @@ class ReplicationClient:
     async def run(self, handler: Handler) -> None:
         """Connect, start replication, and dispatch decoded transactions forever.
 
-        On a `ReplicationConnectionError`, waits out an exponentially growing
-        backoff and retries `_run_once` -- which always resumes from the
-        durable checkpoint, never from wherever the dropped connection left
-        off. Any other exception (a `ProtocolError`, `DecodeError`,
-        `CheckpointError`, or one raised by `handler` itself) propagates
-        uncaught, ending `run`.
+        `handler` is called once per assembled `Transaction`, in commit
+        order, with a `CheckpointHandle` bound to this run's checkpoint
+        store. The handler is responsible for calling `checkpoint.save(...)`
+        itself; walbox never checkpoints automatically.
 
-        Args:
-            handler: Called once per assembled `Transaction`, in commit order,
-                with a `CheckpointHandle` bound to this run's checkpoint
-                store -- the handler is always responsible for calling
-                `checkpoint.save(...)` itself; walbox never checkpoints
-                automatically.
+        On a `ReplicationConnectionError`, waits out an exponentially
+        growing backoff and retries, always resuming from the durable
+        checkpoint rather than wherever the dropped connection left off.
+        Any other exception propagates uncaught, ending `run`.
         """
         self._next_backoff = _INITIAL_BACKOFF
         while not self._closing.is_set():
@@ -172,12 +163,12 @@ class ReplicationClient:
                 tg.create_task(self._consume_loop(handler), name="walbox-consumer")
         except* ReplicationConnectionError as excgroup:
             # TaskGroup always raises an (Base)ExceptionGroup, even for a
-            # single failing child task -- unwrap so `run`'s plain `except
+            # single failing child task. Unwrap so `run`'s plain `except
             # ReplicationConnectionError` keeps seeing exactly the exception
             # type it always has. Only the receiver's transport calls ever
             # raise this, so exactly one is ever in the group.
             raise excgroup.exceptions[0] from None
-        # Only reached once both tasks have returned normally -- i.e. only on a
+        # Only reached once both tasks have returned normally, i.e. only on a
         # clean, close()-triggered shutdown.
         logger.info(
             "shutdown: sending final status update",
@@ -210,7 +201,7 @@ class ReplicationClient:
                 payload = await self._await_with_status_updates(self._transport.read())
                 await self._handle_frame(payload)
         except asyncio.QueueShutDown:
-            # close() was called while a put() was pending -- expected, not an error.
+            # close() was called while a put() was pending: expected, not an error.
             return
 
     async def _handle_frame(self, payload: bytes) -> None:
@@ -220,7 +211,7 @@ class ReplicationClient:
                 await self._handle_xlog_data(message)
             case PrimaryKeepalive():
                 await self._handle_keepalive(message)
-            case _:  # pragma: no cover -- exhaustive over ReplicationMessage
+            case _:  # pragma: no cover, exhaustive over ReplicationMessage
                 unreachable = f"unhandled replication message type {message!r}"
                 raise AssertionError(unreachable)
 
@@ -230,7 +221,7 @@ class ReplicationClient:
         pgoutput_message = self._decoder.decode(xlog.payload)
         if isinstance(pgoutput_message, Type | Origin):
             # Decoded fully (so the byte stream never desyncs) but not
-            # actionable for the outbox pattern -- logged and dropped here
+            # actionable for the outbox pattern: logged and dropped here
             # rather than forwarded to the assembler.
             logger.debug(
                 "discarding unactionable pgoutput message: %r",
@@ -242,33 +233,22 @@ class ReplicationClient:
             await self._enqueue(transaction)
 
     async def _await_with_status_updates(self, awaitable: Awaitable[_T]) -> _T:
-        """Await `awaitable` to completion, sending status updates while it waits.
+        """Await `awaitable`, sending status updates while it waits.
 
-        While waiting, sends a non-advancing status update every
-        `options.status_interval` seconds so PostgreSQL never sees silence
-        for longer than that, no matter how long `awaitable` takes. The same
-        underlying task is re-awaited every lap -- never abandoned, never
-        duplicated -- so this is safe to call for a `put()` that must not
-        resolve twice.
-
-        Also checks `self._closing` at each of those same wake-ups: a
-        pending `put()` is already unblocked immediately by `close()`'s
-        `queue.shutdown(immediate=True)`, but a pending `transport.read()`
-        on a genuinely idle connection has no such signal reaching it, so
-        this is what bounds an idle receiver's shutdown latency to one
-        `status_interval`.
-
-        Args:
-            awaitable: The thing to await -- e.g. `transport.read()` or
-                `queue.put(transaction)`.
+        Sends a non-advancing status update every `options.status_interval`
+        seconds so PostgreSQL never sees silence for longer than that, no
+        matter how long `awaitable` takes. Also checks `self._closing` on
+        each wake-up, which is what bounds an idle receiver's shutdown
+        latency to one `status_interval` (a pending `transport.read()` on an
+        otherwise idle connection has no other way to notice `close()` was
+        called).
 
         Returns:
             Whatever `awaitable` resolves to.
 
         Raises:
             asyncio.QueueShutDown: If `self._closing` is set while still
-                waiting -- the same signal a shut-down queue's own pending
-                operations raise, so callers handle both identically.
+                waiting.
         """
         task = asyncio.ensure_future(awaitable)
         try:
@@ -283,22 +263,23 @@ class ReplicationClient:
                 await self._maybe_report_metrics()
                 self._next_status_at = time.monotonic() + self.options.status_interval
         finally:
-            # If we're leaving for any reason other than `task` itself having
-            # completed -- QueueShutDown above, or this coroutine being
-            # cancelled directly (e.g. a caller cancelling `run()`'s task
-            # instead of calling `close()`) -- `task` is still pending and
-            # must be cancelled and awaited here, not left to leak. Otherwise
-            # its `_wait_readable`/`_wait_writable` never reaches its own
-            # `finally` block, leaving a stale `loop.add_reader`/`add_writer`
-            # registration on a file descriptor that can be silently reused
-            # by a later connection once this one closes -- reproducible in
-            # a real crash, but only on epoll (Linux): closing a socket
-            # implicitly drops it from epoll at the kernel level while the
-            # selector's own bookkeeping doesn't know that happened, so the
-            # next connection to reuse that fd number collides with a stale
-            # entry (`FileNotFoundError` from `EpollSelector.modify`).
-            # kqueue (macOS) tolerates this, which is why it's invisible in
-            # local runs and only surfaces in Linux CI.
+            # If we're leaving for any reason other than `task` itself
+            # completing (QueueShutDown above, or this coroutine being
+            # cancelled directly, e.g. a caller cancelling `run()`'s task
+            # instead of calling `close()`), `task` is still pending and
+            # must be cancelled and awaited here, not left to leak.
+            # Otherwise its `_wait_readable`/`_wait_writable` never reaches
+            # its own `finally` block, leaving a stale
+            # `loop.add_reader`/`add_writer` registration on a file
+            # descriptor that can be silently reused by a later connection
+            # once this one closes. Reproducible in a real crash, but only
+            # on epoll (Linux): closing a socket implicitly drops it from
+            # epoll at the kernel level while the selector's own bookkeeping
+            # doesn't know that happened, so the next connection to reuse
+            # that fd number collides with a stale entry
+            # (`FileNotFoundError` from `EpollSelector.modify`). kqueue
+            # (macOS) tolerates this, which is why it's invisible in local
+            # runs and only surfaces in Linux CI.
             if not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -347,10 +328,8 @@ class ReplicationClient:
     async def _maybe_report_metrics(self) -> None:
         """Invoke `options.on_metrics`, if set, with a fresh `Metrics` snapshot.
 
-        `on_metrics` is third-party application code with a documented
-        contract of "must not raise" -- a callback that violates it is
-        caught and logged here, at this single call site, rather than being
-        allowed to take down the replication loop.
+        `on_metrics` must not raise; if it does, the exception is caught and
+        logged here rather than taking down the replication loop.
         """
         if self.options.on_metrics is None:
             return

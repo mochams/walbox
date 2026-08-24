@@ -1,12 +1,11 @@
 """Decode/encode functions for the inner PostgreSQL logical replication messages.
 
-Covers `XLogData`, `PrimaryKeepaliveMessage`, and `StandbyStatusUpdate` -- the
+Covers `XLogData`, `PrimaryKeepaliveMessage`, and `StandbyStatusUpdate`: the
 three inner message shapes that ride inside PostgreSQL's COPY BOTH stream.
-The outer CopyData envelope is stripped/constructed by libpq itself
-(`ReplicationTransport`, via `pgconn.get_copy_data()`/`put_copy_data()`), so
-this module never sees it: every function here takes or returns a bare
-inner-message payload. Pure functions and immutable value objects only --
-no sockets, no libpq.
+The outer CopyData envelope is stripped and constructed by libpq itself
+(`ReplicationTransport`), so every function here takes or returns a bare
+inner-message payload. Pure functions and immutable value objects only,
+no sockets or libpq.
 """
 
 import logging
@@ -48,8 +47,9 @@ class PrimaryKeepalive:
 class StandbyStatusUpdate:
     """A client-to-server progress report of received/flushed/applied LSNs.
 
-    Stores actual, un-adjusted LSNs -- the `+1` PostgreSQL's wire format
-    requires is applied only at encoding time, in `encode_standby_status_update`.
+    Stores actual, un-adjusted LSNs. The `+1` PostgreSQL's wire format
+    requires is applied only at encoding time, in
+    `encode_standby_status_update`.
     """
 
     written_lsn: int
@@ -64,9 +64,6 @@ ReplicationMessage = XLogData | PrimaryKeepalive
 
 def decode_xlog_data(payload: bytes) -> XLogData:
     """Decode a bare `XLogData` ('w') payload.
-
-    Args:
-        payload: A complete, unwrapped inner-message payload.
 
     Returns:
         The decoded `XLogData`.
@@ -88,9 +85,6 @@ def decode_xlog_data(payload: bytes) -> XLogData:
 
 def decode_primary_keepalive(payload: bytes) -> PrimaryKeepalive:
     """Decode a bare `PrimaryKeepaliveMessage` ('k') payload.
-
-    Args:
-        payload: A complete, unwrapped inner-message payload.
 
     Returns:
         The decoded `PrimaryKeepalive`.
@@ -115,9 +109,6 @@ def decode_primary_keepalive(payload: bytes) -> PrimaryKeepalive:
 
 def decode_replication_message(payload: bytes) -> ReplicationMessage:
     """Dispatch a bare inner-message payload to its decoder by leading byte.
-
-    Args:
-        payload: A complete, unwrapped inner-message payload.
 
     Returns:
         The decoded `XLogData` or `PrimaryKeepalive`.
@@ -146,18 +137,13 @@ def decode_replication_message(payload: bytes) -> ReplicationMessage:
 def encode_standby_status_update(update: StandbyStatusUpdate) -> bytes:
     """Encode a `StandbyStatusUpdate` ('r') as a bare inner-message payload.
 
-    Applies the `+1` PostgreSQL documents for each LSN field ("the location
-    of the last WAL byte + 1") -- the one place in the codebase this
-    adjustment happens; `update`'s own fields stay the actual, un-adjusted
-    positions. The caller (`ReplicationTransport.write()`) hands the result
-    directly to `pgconn.put_copy_data()`, which constructs the outer CopyData
-    envelope; this function must not add one itself.
-
-    Args:
-        update: The status update to encode.
+    Applies the `+1` PostgreSQL requires on each LSN field; `update`'s own
+    fields stay the actual, un-adjusted positions.
 
     Returns:
-        The bare 34-byte payload.
+        The bare 34-byte payload. The caller hands it to
+        `pgconn.put_copy_data()`, which constructs the outer CopyData
+        envelope itself.
     """
     return (
         b"r"
@@ -171,9 +157,6 @@ def encode_standby_status_update(update: StandbyStatusUpdate) -> bytes:
 
 def pg_now_micros(now: datetime | None = None) -> int:
     """Convert a UTC timestamp to microseconds since the PostgreSQL epoch.
-
-    Args:
-        now: The timestamp to convert, defaulting to the current time.
 
     Returns:
         Microseconds elapsed since 2000-01-01 00:00:00 UTC.

@@ -88,8 +88,7 @@ class WalboxError(Exception):
         """Render as the message, plus any set context fields in brackets.
 
         Returns:
-            The message, followed by a bracketed list of the context fields
-            that are set, if any.
+            The message, with a bracketed list of context fields if any are set.
         """
         rendered = _render_context(self.context)
         return f"{self.message}{rendered}" if rendered else self.message
