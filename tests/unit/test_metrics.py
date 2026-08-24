@@ -118,6 +118,53 @@ async def test_checkpoint_latency_stays_at_zero_if_the_handler_never_saves():
     assert client._current_metrics().last_checkpoint_latency_seconds == 0.0
 
 
+async def test_transactions_since_checkpoint_increments_when_the_handler_never_saves():
+    client = ReplicationClient(_options())
+    handler = AsyncMock()
+
+    await client._process(_transaction(xid=1, commit_lsn=100), handler)
+    await client._process(_transaction(xid=2, commit_lsn=200), handler)
+
+    assert client._current_metrics().transactions_since_checkpoint == 2
+
+
+async def test_transactions_since_checkpoint_resets_when_the_handler_saves():
+    client = ReplicationClient(_options())
+
+    async def never_saves(
+        transaction: Transaction, checkpoint: CheckpointHandle
+    ) -> None:
+        pass
+
+    async def saves(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
+        await checkpoint.save(transaction.commit_lsn)
+
+    await client._process(_transaction(xid=1, commit_lsn=100), never_saves)
+    await client._process(_transaction(xid=2, commit_lsn=200), never_saves)
+    assert client._current_metrics().transactions_since_checkpoint == 2
+
+    await client._process(_transaction(xid=3, commit_lsn=300), saves)
+    assert client._current_metrics().transactions_since_checkpoint == 0
+
+    await client._process(_transaction(xid=4, commit_lsn=400), never_saves)
+    assert client._current_metrics().transactions_since_checkpoint == 1
+
+
+async def test_processing_a_transaction_logs_transactions_since_checkpoint(caplog):
+    client = ReplicationClient(_options())
+    handler = AsyncMock()
+
+    with caplog.at_level(logging.DEBUG, logger="walbox.client"):
+        await client._process(_transaction(xid=1, commit_lsn=100), handler)
+
+    matching = [
+        record
+        for record in caplog.records
+        if getattr(record, "transactions_since_checkpoint", None) == 1
+    ]
+    assert matching, "expected a debug log carrying transactions_since_checkpoint"
+
+
 async def test_metrics_callback_exception_is_caught_and_logged(caplog):
     def _raising_callback(metrics: Metrics) -> None:
         raise ValueError(metrics)

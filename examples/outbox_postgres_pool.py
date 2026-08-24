@@ -13,6 +13,15 @@ calls its handler with a single `(Transaction, CheckpointHandle)` pair --
 `functools.partial` is how `pool` gets bound ahead of time, the same way
 outbox_postgres.py binds `dsn`.
 
+Worth being precise about: since this handler always passes `connection=conn`
+to `checkpoint.save`, `PostgresCheckpointStore`'s own pooled `_acquire` is
+never exercised by `save()` here -- only by `ReplicationClient.run()`'s one
+`load()` call at startup. The per-transaction connection reuse visible below
+comes from the handler checking out `pool.connection()` directly, which
+doesn't depend on `from_pool` at all. `from_pool` earns its keep on *every*
+transaction in `outbox_pool.py` instead, whose handler calls
+`checkpoint.save(tx.commit_lsn)` with no `connection=`.
+
 Requires `psycopg-pool` (`pip install psycopg-pool`) -- a separate package
 from `psycopg` itself. walbox's own dependency footprint stays at just
 `psycopg`; `from_pool` and this handler only need *something* shaped like a

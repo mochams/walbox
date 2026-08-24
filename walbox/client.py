@@ -86,6 +86,7 @@ class ReplicationClient:
         self._last_keepalive_wal_end = 0
         self._last_keepalive_at = 0.0
         self._last_checkpoint_latency = 0.0
+        self._transactions_since_checkpoint = 0
 
     def _new_transport(self) -> ReplicationTransport:
         return ReplicationTransport(
@@ -325,12 +326,21 @@ class ReplicationClient:
             self._record_durable_progress,
         )
         self._transactions_processed += 1
+        self._transactions_since_checkpoint += 1
         self._changes_processed += len(transaction.changes)
         handler_started_at = time.monotonic()
         await handler(transaction, checkpoint)
         self._last_handler_latency = time.monotonic() - handler_started_at
+        logger.debug(
+            "%d transaction(s) processed since last checkpoint save",
+            self._transactions_since_checkpoint,
+            extra={
+                "transactions_since_checkpoint": self._transactions_since_checkpoint,
+            },
+        )
 
     def _record_durable_progress(self, lsn: int, latency: float) -> None:
+        self._transactions_since_checkpoint = 0
         self._durable_lsn = max(self._durable_lsn, lsn)
         self._last_checkpoint_latency = latency
 
@@ -361,6 +371,7 @@ class ReplicationClient:
             queue_depth=self._queue.qsize(),
             last_keepalive_at=self._last_keepalive_at,
             last_checkpoint_latency_seconds=self._last_checkpoint_latency,
+            transactions_since_checkpoint=self._transactions_since_checkpoint,
         )
 
     async def _send_status_update(self, *, reply_requested: bool) -> None:

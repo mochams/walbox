@@ -34,7 +34,8 @@ dependencies and zero behavioral change on applications that don't care to look.
 - An optional metrics callback exposing point-in-time counters/gauges covering
   receive position, checkpoint position, replication lag, throughput
   (transactions/changes processed), reconnect count, handler latency, queue depth,
-  last keepalive time, and checkpoint latency.
+  last keepalive time, checkpoint latency, and how many transactions have been
+  processed since the last checkpoint save.
 - Zero impact on correctness or behavior: purely additive instrumentation.
 
 **Non-Goals:**
@@ -70,6 +71,7 @@ class Metrics:
     queue_depth: int
     last_keepalive_at: float
     last_checkpoint_latency_seconds: float
+    transactions_since_checkpoint: int
 
 MetricsCallback = Callable[[Metrics], None]
 ```
@@ -100,6 +102,25 @@ meaningful "how far behind is the client" signal. The fix is a second, metrics-o
 tracked position, advanced only by incoming data messages and never touched by
 keepalives, so the lag calculation reflects genuine received-vs-server-advertised
 distance rather than an artifact of when the last keepalive happened to arrive.
+
+### Surfacing a handler that never checkpoints
+
+A handler that forgets to call `checkpoint.save(...)` (Checkpoint Store, RFC 01 --
+walbox has no auto-checkpoint mode, so this is entirely on the application) is
+otherwise invisible: transactions keep flowing, the process looks healthy, and
+nothing surfaces the mistake until an operator separately notices
+`pg_replication_slots` isn't advancing or WAL retention is growing.
+`transactions_since_checkpoint` closes that gap: a plain counter, incremented once
+per transaction in `_process` and reset to zero by the same durable-progress hook
+(`_record_durable_progress`) that already fires after every genuine `store.save()`
+call, regardless of when in the handler's body it happens. It's deliberately not
+an error: a handler that batches its own checkpointing (saving every N
+transactions on purpose) looks identical to one that forgot entirely, and the
+library has no way to tell those apart, so surfacing this as a counter and a debug
+log -- not a raised exception -- is the only honest option. The debug log fires
+once per transaction processed (`"%d transaction(s) processed since last
+checkpoint save"`), matching the existing debug-level, per-message-volume
+convention below.
 
 ### Logging conventions
 
@@ -138,12 +159,25 @@ library to maintaining and versioning against a specific ecosystem's client libr
 Left entirely to the application for v0.1, matching the broader "very small public
 API" principle the whole project follows.
 
+**A counter plus a debug log for a handler that never checkpoints, vs. raising an
+error.** Raising would catch the mistake immediately and loudly, but walbox cannot
+distinguish "this handler forgot to checkpoint" from "this handler deliberately
+batches its checkpointing every N transactions" -- both look identical from the
+client's side: transactions processed, `checkpoint.save()` not called yet. Rejecting
+would punish a legitimate, supported usage pattern to catch a mistake the library
+has no reliable way to detect as a mistake. A counter (visible via `on_metrics`,
+so it can back real alerting) plus a debug log (visible to anyone actively
+investigating) surfaces the same information without asserting a judgment the
+library isn't in a position to make.
+
 ## Implementation
 
 - `walbox/abc.py`: `Metrics`, `MetricsCallback`, `ReplicationOptions.on_metrics`.
 - `walbox/client.py`: per-event counters, `_maybe_report_metrics`,
-  `_current_metrics`, the second `_receive_lsn` tracked position, lifecycle/
-  reconnect/shutdown logging.
+  `_current_metrics`, the second `_receive_lsn` tracked position,
+  `_transactions_since_checkpoint` (incremented in `_process`, reset in
+  `_record_durable_progress`) and its debug log, lifecycle/reconnect/shutdown
+  logging.
 - `walbox/transport.py`: connect/slot-creation/`START_REPLICATION` logging.
 - `walbox/protocol.py`: malformed-frame error logging before re-raising.
 - `walbox/pgoutput.py`: relation-cache insert/overwrite logging, Type/Origin
@@ -166,6 +200,10 @@ API" principle the whole project follows.
   position, not the feedback-facing "last written" field; verified with a
   synthetic keepalive and a known received position producing the expected lag
   value, distinct from what the (wrong) naive calculation would produce.
+- `transactions_since_checkpoint` increments once per transaction when the
+  handler never calls `save()`, and resets to zero the moment it does, whichever
+  transaction that happens on; each processed transaction produces a debug log
+  carrying the current count in its structured context.
 - Queue depth reported in metrics matches the bounded queue's actual current size
   at the moment of reporting.
 - Against real PostgreSQL: running one transaction through with a log-capturing

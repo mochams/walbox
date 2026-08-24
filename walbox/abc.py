@@ -111,6 +111,7 @@ class Metrics:
     queue_depth: int
     last_keepalive_at: float
     last_checkpoint_latency_seconds: float
+    transactions_since_checkpoint: int
 
 
 MetricsCallback = Callable[[Metrics], None]
