@@ -3,6 +3,7 @@
 walbox is a PostgreSQL logical replication client. It connects directly to PostgreSQL, reads the replication stream, and delivers transactions to your application.
 
 Unlike a PostgreSQL SUBSCRIPTION, walbox does not:
+
 - Create a subscriber database
 - Perform initial table synchronization (COPY)
 - Store the replication slot in PostgreSQL's own catalogs
@@ -29,6 +30,7 @@ max_wal_senders = 10
 ```
 
 Size these based on your deployment:
+
 - `max_replication_slots`: Number of concurrent replication slots across all consumers (each walbox consumer needs one slot)
 - `max_wal_senders`: Must be at least as large as `max_replication_slots`
 
@@ -93,6 +95,7 @@ If you UPDATE or DELETE rows, the table needs a usable `REPLICA IDENTITY` so Pos
 
 - **With a primary key (common)**: PostgreSQL automatically uses `REPLICA IDENTITY DEFAULT`, which is sufficient
 - **Without a primary key (rare)**: Set explicitly:
+
   ```sql
   ALTER TABLE outbox REPLICA IDENTITY FULL;
   ```
@@ -104,6 +107,7 @@ If you UPDATE or DELETE rows, the table needs a usable `REPLICA IDENTITY` so Pos
 When you call `await client.run()`:
 
 1. walbox creates the replication slot (idempotently):
+
    ```sql
    CREATE_REPLICATION_SLOT slot_name LOGICAL pgoutput
    ```
@@ -129,6 +133,7 @@ On restart, walbox resumes from the last saved checkpoint, not from zero.
 ### Multi-consumer deployments
 
 Each walbox consumer needs its own:
+
 - Replication slot (distinct slot name)
 - Checkpoint store (FileCheckpointStore or PostgresCheckpointStore)
 

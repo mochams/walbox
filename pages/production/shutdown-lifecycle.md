@@ -173,7 +173,7 @@ Leave headroom—don't fill max_connections to the brim.
 ## Clean vs. abrupt shutdown
 
 | Scenario | Checkpoint saved? | Redelivery on restart? |
-|---|---|---|
+| --- | --- | --- |
 | Graceful shutdown (SIGTERM) | Yes (final handler completes and checkpoints) | No |
 | Crash mid-handler | No | Yes (same transaction redelivered) |
 | Crash before checkpoint saved | No | Yes (any unchecked transactions redelivered) |

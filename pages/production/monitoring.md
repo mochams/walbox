@@ -30,7 +30,7 @@ options = ReplicationOptions(
 ## Available metrics
 
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `receive_lsn` | int | Highest WAL LSN received from PostgreSQL |
 | `checkpoint_lsn` | int | Durable application checkpoint position |
 | `replication_lag_bytes` | int | Bytes between receive_lsn and last keepalive |
@@ -187,6 +187,7 @@ WHERE consumer_name = 'my-consumer';
 For `FileCheckpointStore`, read the checkpoint file directly.
 
 The LSN and timestamp tell you:
+
 - How old the checkpoint is
 - How frequently checkpoints are saved
 - How much lag exists between receipt and durability
@@ -203,6 +204,7 @@ logger = logging.getLogger("walbox")
 ```
 
 Key log messages appear at INFO level:
+
 - Connection established / lost / reconnecting
 - Backpressure engaged / relieved
 - Shutdown initiated / complete

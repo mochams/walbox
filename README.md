@@ -5,16 +5,29 @@
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Async Python runtime for consuming PostgreSQL logical replication as a stream of
-committed transactions, built for the transactional outbox pattern: write an outbox
-row in the same transaction as your business data, then stream committed inserts to
-an external system with no polling and no `LISTEN`/`NOTIFY`.
+Async Python runtime for consuming PostgreSQL logical replication as a stream of committed transactions. Built for the **transactional outbox pattern**: write an outbox row in the same database transaction as your business data, then stream those committed inserts to an external system with no polling and no `LISTEN`/`NOTIFY`.
 
-- **At-least-once delivery**: a durable local checkpoint, never silent loss
-- **Backpressure-aware**: a slow handler can't blow up memory or starve PostgreSQL's keepalives
-- **Reconnects and resumes** automatically from the last durable checkpoint
-- **Graceful shutdown**: finishes in-flight work and checkpoints it before exiting
-- **Asyncio-native**, one dependency (`psycopg`)
+**[📖 Documentation](https://mochams.github.io/walbox/) · [⚡ Quickstart](https://mochams.github.io/walbox/getting-started/quickstart/) · [🏗️ Architecture](ARCHITECTURE.md)**
+
+## The problem
+
+Applications often need to update their database and publish an event to an external system as one logical operation. Doing both directly creates a dual-write problem: the database transaction can commit while the external publish fails, or the publish can succeed while the application crashes before recording that it was delivered.
+
+## The solution
+
+The **transactional outbox pattern** solves this by writing the business data and an outbox event in the same PostgreSQL transaction. The event is then delivered asynchronously to the external system.
+
+walbox takes the pattern a step further. It consumes committed outbox changes directly from PostgreSQL logical replication, so there is no polling loop and no `LISTEN/NOTIFY` coordination. Events become available from the database WAL as transactions commit, while durable checkpoints provide recovery and at-least-once delivery.
+
+## Guarantees
+
+- **At-least-once delivery**: a durable local checkpoint ensures committed events are not silently skipped
+- **Transactional consistency**: outbox events are committed atomically with your business data
+- **No polling**: consumes changes directly from PostgreSQL logical replication
+- **Bounded backpressure**: queue limits prevent a slow handler from accumulating unbounded memory
+- **Automatic recovery**: resumes from the last durable checkpoint on restart
+- **Graceful shutdown**: lets in-flight work complete before exiting
+- **Asyncio-native**: built for Python's async runtime
 
 ## Install
 
@@ -22,32 +35,24 @@ an external system with no polling and no `LISTEN`/`NOTIFY`.
 pip install walbox
 ```
 
-Requires `libpq` available at build/run time (typically a system package, e.g.
-`libpq-dev` on Debian/Ubuntu). To try walbox without a system `libpq`, install
-psycopg's self-contained wheel alongside it: `pip install walbox "psycopg[binary]"`.
+Psycopg 3 is the only Python dependency. By default it uses your system's `libpq`; if you don't have it installed, use the binary distribution: `pip install walbox psycopg[binary]`.
 
-## Quickstart
+## Example
+
+PostgreSQL setup (one-time):
 
 ```sql
--- Run once, manually. walbox creates its replication slot idempotently, but
--- never creates or alters the publication itself (see "PostgreSQL configuration"
--- below).
 CREATE TABLE outbox (
-    id          BIGSERIAL PRIMARY KEY,
-    entity_type TEXT NOT NULL,
-    entity_id   TEXT NOT NULL,
-    event_type  TEXT NOT NULL,
-    payload     JSONB NOT NULL,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id BIGSERIAL PRIMARY KEY, entity_type TEXT, entity_id TEXT,
+    event_type TEXT, payload JSONB, created_at TIMESTAMPTZ DEFAULT now()
 );
-
 CREATE PUBLICATION walbox_pub FOR TABLE outbox;
 ```
 
-```py
-import asyncio
-import signal
+Handler (`handler.py`):
 
+```python
+import asyncio
 from walbox import (
     ChangeKind,
     CheckpointHandle,
@@ -58,126 +63,52 @@ from walbox import (
 )
 
 
-async def publish_to_broker(payload: dict) -> None:
-    # Replace with your actual publish call.
-    print("publishing:", payload)
-
-
 async def handle(tx: Transaction, checkpoint: CheckpointHandle) -> None:
     for change in tx.changes:
-        if change.table != "public.outbox" or change.kind != ChangeKind.INSERT:
-            continue
-        await publish_to_broker(change.new)
-
+        if change.table == "public.outbox" and change.kind == ChangeKind.INSERT:
+            print(f"Event: {change.new}")
     await checkpoint.save(tx.commit_lsn)
 
 
-async def main() -> None:
-    dsn = "your-postgres-dsn"
-    checkpoint_store = PostgresCheckpointStore(dsn, consumer_name="my-consumer")
-
-    options = ReplicationOptions(
-        consumer_name="my-consumer",
-        dsn=dsn,
-        slot_name="outbox_slot",
-        publication_name="walbox_pub",
-        checkpoint_store=checkpoint_store,
+async def main():
+    dsn = "postgresql://user:password@localhost/db"
+    checkpoint_store = PostgresCheckpointStore(dsn, consumer_name="app")
+    client = ReplicationClient(
+        ReplicationOptions(
+            consumer_name="app",
+            dsn=dsn,
+            slot_name="slot",
+            publication_name="walbox_pub",
+            checkpoint_store=checkpoint_store,
+        )
     )
-
-    client = ReplicationClient(options)
-
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, client.close)
-
     await client.run(handle)
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
 ```
 
-A complete, runnable version lives in [`examples/outbox.py`](examples/outbox.py),
-including the same-transaction checkpoint pattern for a Postgres sink (see
-"Exactly-once effects" below).
+Run it, then insert a row:
 
-## PostgreSQL configuration
+```sh
+python handler.py
+# In another terminal:
+INSERT INTO outbox (entity_type, entity_id, event_type, payload)
+VALUES ('user', '42', 'created', '{"name":"Alice"}'::jsonb);
+```
 
-- `wal_level = logical` in `postgresql.conf` (requires a server restart).
-- Size `max_replication_slots`/`max_wal_senders` with headroom for at least one
-  slot/sender per consumer; `max_wal_senders` should be at least as large as
-  `max_replication_slots`.
-- The connecting role needs `REPLICATION`: `ALTER ROLE consumer_role REPLICATION;`
-  (or `CREATE ROLE ... WITH REPLICATION LOGIN;`).
-- A `pg_hba.conf` entry granting that role access to the `replication`
-  pseudo-database, e.g. `host replication consumer_role 10.0.0.0/8 scram-sha-256`.
-- On PostgreSQL 15+, the connecting role additionally needs `SELECT` on the
-  published tables (15 tightened this; 14 doesn't enforce it).
-- The published table needs a usable `REPLICA IDENTITY` for `UPDATE`/`DELETE` to see
-  old-row data. A primary key (`DEFAULT`) is enough for most outbox-style tables; a
-  table with none needs `ALTER TABLE ... REPLICA IDENTITY FULL` (or `USING INDEX`).
-- walbox creates its replication slot idempotently if missing. It does **not** create
-  the publication: `CREATE PUBLICATION` is a manual, one-time step (see Limitations).
+The handler receives the row and saves a durable checkpoint. On restart, it resumes from that checkpoint—no data loss.
 
-## Exactly-once effects
+See [**Examples**](https://github.com/mochams/walbox/tree/main/examples) for working patterns: webhooks, message brokers, PostgreSQL sinks, and more.
 
-walbox provides **at-least-once delivery** with a durable replay position. It does
-**not** implement or claim end-to-end exactly-once effects. The flow: Postgres
-transaction → outbox row → logical replication → handler → external sink.
-Exactly-once *effects* come from combining the transactional outbox write with
-durable checkpointing and an idempotent/deduplicating sink: either dedupe on
-`outbox.id`, or, when the sink is itself PostgreSQL, use
-`PostgresCheckpointStore`'s same-transaction pattern (`handle`
-in [`examples/outbox_postgres.py`](examples/outbox_postgres.py)). If the process
-crashes after an external publish succeeds but before the checkpoint is durable,
-the transaction **will** be delivered again. That's intentional, not a bug.
+## Next steps
 
-## Failure semantics
-
-walbox is correct if the process crashes at *any* point, whether before, during, or
-after the handler runs, mid-checkpoint, mid-reconnect, mid-shutdown, or partway
-through a large streamed transaction. The result is always "delivered again" or "not
-delivered yet," never silent loss and never a torn transaction. The full
-crash-point-by-crash-point table is in
-[`ARCHITECTURE.md`](ARCHITECTURE.md#failure-semantics).
-
-## Supported versions
-
-- **PostgreSQL 14+**: the floor for protocol version 2 / `streaming 'on'`, which
-  walbox always negotiates. A pre-14 server is unsupported, not silently degraded.
-- **Python 3.13+**: `asyncio.Queue.shutdown()`, which backpressure and graceful
-  shutdown depend on, is a 3.13 addition.
-
-Both are deliberate floors for this release, not aspirations to relax later.
-
-## Limitations
-
-- Streamed-transaction memory isn't accounted against `max_pending_transactions`, so
-  large or numerous concurrent streamed transactions can grow memory independent of
-  that bound.
-- No built-in metrics exporter, only a synchronous `on_metrics` callback; wiring it
-  to Prometheus/StatsD/etc. is left to the application.
-- Strictly sequential, single-consumer handling, with no concurrent handler execution.
-- Manual publication management: walbox never creates or alters the publication.
-- Truncate's `CASCADE`/`RESTART IDENTITY` flags, and Type/Origin message content, are
-  decoded but never surfaced to the application.
+- **[Quickstart](https://mochams.github.io/walbox/getting-started/quickstart/)** (5 minutes): step-by-step setup
+- **[Getting Started](https://mochams.github.io/walbox/getting-started/introduction/)**: concepts and guarantees
+- **[Production Guide](https://mochams.github.io/walbox/production/architecture/)**: deployment, monitoring, configuration
 
 ## Status
 
-This is a 1.0.0 beta. The code is tested and correct for everything described above:
-100% branch coverage, including integration tests against real PostgreSQL for every
-failure scenario in the table above. "Beta" here is about the API surface still
-settling, not about whether it's safe to run.
+walbox is still in its early days. It is tested with 100% branch coverage and integration tests against real PostgreSQL, but the API may change as the project evolves toward 1.0.0.
 
-Concretely: the public export list won't shrink, though construction signatures and
-field names may still shift before the final 1.0.0 ships. The `Metrics` callback shape
-and streamed-vs-non-streamed `Transaction` semantics are the most likely candidates to
-still change. Once the final 1.0.0 ships, the stable surface follows semver.
-
-## See also
-
-- [`ARCHITECTURE.md`](ARCHITECTURE.md): system design, the correctness invariant, the error hierarchy
-- [`docs/README.md`](docs/README.md): the RFCs behind each feature
-- [`CONTRIBUTING.md`](CONTRIBUTING.md): development setup, tests, code style
-- [`PROJECT.md`](PROJECT.md): project status and tooling rationale
-- [`LICENSE`](LICENSE): MIT
+**Development**: see [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup and [`LICENSE`](LICENSE) for terms.

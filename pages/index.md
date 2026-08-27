@@ -66,8 +66,6 @@ See [Getting Started](getting-started/introduction.md) for setup, or jump to [Ex
 
 By default, Psycopg uses your system's libpq. If you don't have libpq installed, Psycopg can use its own bundled version — see [Getting Started](getting-started/introduction.md) for details.
 
-No Psycopg 2, no ORM, no message broker library. walbox stays focused: it delivers committed rows, not opinions about how you publish them.
-
 ---
 
 **Next**: [Getting Started](getting-started/introduction.md) · [Production Guide](production/architecture.md) · [Examples](examples/transactional-outbox.md)

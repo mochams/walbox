@@ -20,8 +20,6 @@ walbox is built for a specific pattern: one Python process consuming a single Po
 
 **Not a full replication system**: walbox is optimized for the outbox pattern, not for table replication, schema migration, backfilling, or DDL propagation. If you need general CDC, consider a dedicated platform like Kafka Connect or Debezium.
 
-**Pre-1.0 release**: walbox is at version 0.1.0. The API is actively maintained and the code is tested against real PostgreSQL, but the public API may change. The documentation reflects the current version; see the [GitHub releases](https://github.com/mochams/walbox/releases) for release notes.
-
 ## Next steps
 
 - **New to walbox?** Start with [Quickstart](quickstart.md).

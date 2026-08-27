@@ -7,23 +7,27 @@ A walbox consumer is primarily **I/O-bound**. Resource usage depends on your wor
 ### Factors that determine resource usage
 
 **Memory**:
+
 - `max_pending_transactions` queue size × typical transaction size
 - Large streamed transactions can consume substantial memory during assembly (independent of queue size)
 - Handler buffering (if your handler buffers transactions before sending)
 - Python runtime overhead
 
 **CPU**:
+
 - Single-threaded asyncio event loop; low CPU in typical workloads
 - Handler complexity (if your handler is compute-heavy, CPU will be higher)
 - Broker/external I/O (non-blocking, so doesn't require more CPU)
 
 **Network**:
+
 - One long-lived PostgreSQL replication connection
 - Checkpoint connections (or pool reuse via `from_pool()`)
 - Handler's own connections to sinks/brokers (your responsibility to manage)
 - Latency matters more than bandwidth for replication
 
 **Disk**:
+
 - Only if using `FileCheckpointStore` (small writes, ~1 KB per checkpoint)
 - Checkpoint frequency affects write rate
 
@@ -44,11 +48,13 @@ Don't guess resource limits. Observe your workload and set limits with headroom.
 ## Running walbox
 
 walbox is a Python application. It requires:
+
 - Python 3.13+
 - Psycopg 3 (included when you `pip install walbox`)
 - Any dependencies your handler needs (broker libraries, etc.)
 
 Configure your process manager (systemd, Docker, Kubernetes, etc.) to:
+
 - Restart on failure
 - Send SIGTERM for graceful shutdown
 - Allow 30+ seconds for handler to complete before forcible kill (see [Shutdown & Lifecycle](shutdown-lifecycle.md))
@@ -85,6 +91,7 @@ client_b = ReplicationClient(ReplicationOptions(
 ```
 
 Each consumer:
+
 - Reconnects independently
 - Maintains independent checkpoints
 - Does not interfere with others

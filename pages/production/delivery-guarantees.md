@@ -21,6 +21,7 @@ walbox never advances the durable replication feedback position beyond the appli
 **At-least-once delivery** is what walbox provides. Your handler may be called with the same transaction more than once.
 
 **Exactly-once effects** is what your application achieves. The application state ends up as if each transaction was processed exactly once, despite potential redelivery. This requires either:
+
 - An **idempotent sink** (the handler can safely be retried)
 - A **deduplicating sink** (external system tracks and deduplicates by event ID)
 - An **atomic write + checkpoint** (application state and checkpoint written in one transaction)
@@ -72,12 +73,14 @@ checkpoint_store = PostgresCheckpointStore(dsn, consumer_name="my-consumer")
 ```
 
 **Without a connection** (`checkpoint.save(lsn)`):
+
 - walbox opens its own connection
 - executes an INSERT or UPDATE to the `walbox_checkpoints` table
 - commits immediately
 - the checkpoint is durable once the commit completes
 
 **With a caller's connection** (`checkpoint.save(lsn, connection=conn)`):
+
 - walbox executes the INSERT or UPDATE on your connection
 - **does not commit** (you must commit)
 - the checkpoint participates in your transaction
