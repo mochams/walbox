@@ -159,26 +159,31 @@ The checkpoint is **never** updated until `checkpoint.save()` completes successf
 ## Crash scenarios
 
 ### Before handler runs
+
 - **Checkpoint state**: Previous durable checkpoint intact
 - **On restart**: Transaction fully redelivered
 - **Result**: Handler runs again on the same data
 
 ### During handler execution
+
 - **Checkpoint state**: Previous durable checkpoint intact (handler may have partially completed)
 - **On restart**: Transaction fully redelivered
 - **Result**: Handler runs again; your sink must deduplicate (or use same-transaction pattern)
 
 ### After handler succeeds, before checkpoint saved
+
 - **Checkpoint state**: Previous durable checkpoint intact
 - **On restart**: Transaction fully redelivered
 - **Result**: Canonical at-least-once duplicate. Durability is never sacrificed to avoid it
 
 ### During checkpoint save
+
 - **Checkpoint state**: Previous durable checkpoint intact (current write fails/rolls back)
 - **On restart**: Transaction fully redelivered
 - **Result**: All work since last checkpoint is replayed
 
 ### After checkpoint durable, before feedback sent
+
 - **Checkpoint state**: New checkpoint is durable
 - **On restart**: Resumes from new checkpoint
 - **Result**: The transaction does not need to be redelivered (the checkpoint is durable and is the source of truth for recovery). Replication feedback is a hint to PostgreSQL about slot management, not the application's recovery boundary.

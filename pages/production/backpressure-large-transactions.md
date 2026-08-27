@@ -61,6 +61,7 @@ Queue size is a tradeoff:
 The default of 10 is conservative and suitable for most workloads.
 
 **Rough memory estimate** (for planning, not precise calculation):
+
 - Queue size × average transaction size = approximate queue memory
 - Example: 10 transactions × 10 KB average = ~100 KB queue memory
 - This is a conceptual estimate; actual memory overhead includes Python object headers and internal buffers
@@ -121,11 +122,11 @@ async def handle(tx: Transaction, checkpoint: CheckpointHandle) -> None:
     await checkpoint.save(tx.commit_lsn)
 ```
 
-4. **Monitor process memory** for workloads that can produce large transactions. Use OS-level tools or container memory limits.
+1. **Monitor process memory** for workloads that can produce large transactions. Use OS-level tools or container memory limits.
 
-5. **Allocate sufficient memory** in your deployment. Capacity planning should account for large transactions as a realistic scenario, not an edge case.
+2. **Allocate sufficient memory** in your deployment. Capacity planning should account for large transactions as a realistic scenario, not an edge case.
 
-6. **Evaluate whether walbox is appropriate** for your workload if you regularly handle multi-gigabyte transactions. Extreme cases may require different architectures.
+3. **Evaluate whether walbox is appropriate** for your workload if you regularly handle multi-gigabyte transactions. Extreme cases may require different architectures.
 
 ## Monitoring backpressure
 
@@ -155,6 +156,7 @@ Watch for:
 walbox provides single-consumer semantics per replication slot, which is essential for durability and ordering guarantees. To scale horizontally, run multiple walbox consumers on disjoint subsets of your data.
 
 Each consumer:
+
 - Reads a disjoint subset of rows (e.g., based on `entity_id % number_of_shards`)
 - Has its own replication slot
 - Has its own checkpoint store
