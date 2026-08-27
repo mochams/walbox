@@ -85,7 +85,9 @@ async def test_create_slot_if_missing_is_idempotent(postgres_dsn):
 
 async def test_create_slot_if_missing_raises_for_non_duplicate_failures(postgres_dsn):
     transport = ReplicationTransport(
-        postgres_dsn, "not a valid slot name!", "walbox_pub"
+        postgres_dsn,
+        "not a valid slot name!",
+        "walbox_pub",
     )
     await transport.connect()
     try:
@@ -96,7 +98,8 @@ async def test_create_slot_if_missing_raises_for_non_duplicate_failures(postgres
 
 
 async def test_start_replication_enters_copy_both_and_delivers_bytes_after_an_insert(
-    postgres_dsn, outbox_table
+    postgres_dsn,
+    outbox_table,
 ):
     slot_name = _unique_slot_name()
     transport = ReplicationTransport(postgres_dsn, slot_name, "walbox_pub")
@@ -125,7 +128,8 @@ async def test_start_replication_raises_for_a_nonexistent_slot(postgres_dsn):
 
 
 async def test_read_raises_replication_connection_error_when_server_closes_the_connection(
-    postgres_dsn, outbox_table
+    postgres_dsn,
+    outbox_table,
 ):
     slot_name = _unique_slot_name()
     transport = ReplicationTransport(postgres_dsn, slot_name, "walbox_pub")
@@ -179,7 +183,8 @@ async def test_end_copy_sends_copy_done_without_error(postgres_dsn, outbox_table
 
 
 async def test_end_copy_raises_replication_connection_error_when_server_closes_the_connection(
-    postgres_dsn, outbox_table
+    postgres_dsn,
+    outbox_table,
 ):
     slot_name = _unique_slot_name()
     transport = ReplicationTransport(postgres_dsn, slot_name, "walbox_pub")
@@ -207,7 +212,8 @@ async def test_close_is_safe_to_call_twice(postgres_dsn):
 
 
 async def test_replication_works_over_a_tls_connection(
-    tls_postgres_dsn, tls_outbox_table
+    tls_postgres_dsn,
+    tls_outbox_table,
 ):
     slot_name = _unique_slot_name()
     transport = ReplicationTransport(tls_postgres_dsn, slot_name, "walbox_pub")
@@ -217,7 +223,8 @@ async def test_replication_works_over_a_tls_connection(
         await transport.start_replication(start_lsn=0)
 
         async with await AsyncConnection.connect(
-            tls_postgres_dsn, autocommit=True
+            tls_postgres_dsn,
+            autocommit=True,
         ) as conn:
             await conn.execute(_INSERT_OUTBOX_ROW)
 

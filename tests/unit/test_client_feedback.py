@@ -9,9 +9,12 @@ from dataclasses import dataclass
 from dataclasses import field
 from unittest.mock import AsyncMock
 
+import pytest
+
 from walbox.abc import CheckpointHandle
-from walbox.abc import ReplicationOptions
-from walbox.client import ReplicationClient
+from walbox.abc import WalboxOptions
+from walbox.client import WalboxClient
+from walbox.errors import CheckpointError
 
 
 @dataclass
@@ -27,18 +30,21 @@ class _FakeCheckpointStore:
         self.order.append(("store", lsn))
 
 
-def _options() -> ReplicationOptions:
-    return ReplicationOptions(
+def _options() -> WalboxOptions:
+    return WalboxOptions(
         consumer_name="test-consumer",
         dsn="postgresql://example",
         slot_name="test_slot",
         publication_name="test_pub",
-        checkpoint_store=_FakeCheckpointStore(),
     )
 
 
+def _client() -> WalboxClient:
+    return WalboxClient(_options(), _FakeCheckpointStore())
+
+
 def test_record_durable_progress_advances_durable_lsn():
-    client = ReplicationClient(_options())
+    client = _client()
 
     client._record_durable_progress(100, 0.01)
 
@@ -46,7 +52,7 @@ def test_record_durable_progress_advances_durable_lsn():
 
 
 def test_record_durable_progress_never_regresses():
-    client = ReplicationClient(_options())
+    client = _client()
 
     client._record_durable_progress(100, 0.01)
     client._record_durable_progress(50, 0.01)
@@ -55,7 +61,7 @@ def test_record_durable_progress_never_regresses():
 
 
 def test_record_durable_progress_tracks_the_latest_checkpoint_latency():
-    client = ReplicationClient(_options())
+    client = _client()
 
     client._record_durable_progress(100, 0.25)
 
@@ -65,7 +71,8 @@ def test_record_durable_progress_tracks_the_latest_checkpoint_latency():
 async def test_checkpoint_handle_save_invokes_the_hook_after_the_store_call():
     store = _FakeCheckpointStore()
     handle = CheckpointHandle(
-        store, lambda lsn, latency: store.order.append(("hook", lsn))
+        store,
+        lambda lsn, latency: store.order.append(("hook", lsn)),
     )
 
     await handle.save(42)
@@ -93,8 +100,27 @@ async def test_checkpoint_handle_with_no_hook_does_not_raise():
     assert store.order == [("store", 42)]
 
 
+async def test_checkpoint_handle_save_raises_when_lsn_exceeds_max_lsn():
+    store = _FakeCheckpointStore()
+    handle = CheckpointHandle(store, None, 50)
+
+    with pytest.raises(CheckpointError):
+        await handle.save(51)
+
+    assert store.order == []
+
+
+async def test_checkpoint_handle_save_allows_lsn_at_the_max():
+    store = _FakeCheckpointStore()
+    handle = CheckpointHandle(store, None, 50)
+
+    await handle.save(50)
+
+    assert store.order == [("store", 50)]
+
+
 async def test_send_status_update_uses_durable_lsn_not_last_written_lsn():
-    client = ReplicationClient(_options())
+    client = _client()
     client._transport = AsyncMock()
     client._last_written_lsn = 500
     client._durable_lsn = 200

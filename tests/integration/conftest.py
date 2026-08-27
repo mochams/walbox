@@ -75,7 +75,8 @@ def _generate_self_signed_cert(cert_dir: Path) -> tuple[Path, Path]:
         .not_valid_before(datetime.now(UTC))
         .not_valid_after(datetime.now(UTC) + timedelta(days=1))
         .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False
+            x509.SubjectAlternativeName([x509.DNSName("localhost")]),
+            critical=False,
         )
         .sign(key, hashes.SHA256())
     )
@@ -85,7 +86,7 @@ def _generate_self_signed_cert(cert_dir: Path) -> tuple[Path, Path]:
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.TraditionalOpenSSL,
             encryption_algorithm=serialization.NoEncryption(),
-        )
+        ),
     )
     cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
     return cert_path, key_path
@@ -130,10 +131,14 @@ def tls_postgres_container(
     container = PostgresContainer(_POSTGRES_IMAGE).with_command(_REPLICATION_SETTINGS)
     with container as running:
         running.copy_into_container(
-            cert_path.read_bytes(), "/tmp/server.crt", mode=0o644
+            cert_path.read_bytes(),
+            "/tmp/server.crt",
+            mode=0o644,
         )
         running.copy_into_container(
-            key_path.read_bytes(), "/tmp/server.key", mode=0o600
+            key_path.read_bytes(),
+            "/tmp/server.key",
+            mode=0o600,
         )
         running.exec(
             ExecConfig(
@@ -143,7 +148,7 @@ def tls_postgres_container(
                     "/tmp/server.crt",
                     "/tmp/server.key",
                 ],
-            )
+            ),
         )
         hba_file_result = running.exec(
             ExecConfig(
@@ -157,14 +162,14 @@ def tls_postgres_container(
                     "SHOW hba_file;",
                 ],
                 user="postgres",
-            )
+            ),
         )
         hba_file = hba_file_result.output.decode().strip()
         running.exec(
             ExecConfig(
                 command=["sh", "-c", f"sed -i 's/^host /hostssl /' {hba_file}"],
                 user="postgres",
-            )
+            ),
         )
         running.exec(
             ExecConfig(
@@ -187,7 +192,7 @@ def tls_postgres_container(
                     "SELECT pg_reload_conf();",
                 ],
                 user="postgres",
-            )
+            ),
         )
         yield running
 

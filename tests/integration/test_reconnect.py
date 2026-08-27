@@ -1,7 +1,7 @@
 """Integration tests for reconnect/resume against a real Postgres.
 
 Uses `pg_terminate_backend` (the same technique `tests/integration/test_transport.py`
-uses) to simulate an abrupt disconnection, and asserts `ReplicationClient.run`
+uses) to simulate an abrupt disconnection, and asserts `WalboxClient.run`
 reconnects and always resumes from the durable checkpoint -- redelivering a
 transaction that was never checkpointed, but never one that was.
 """
@@ -11,22 +11,25 @@ import contextlib
 import uuid
 from dataclasses import dataclass
 from dataclasses import field
-from pathlib import Path
 
 import pytest
 from psycopg import AsyncConnection
 
 from walbox.abc import CheckpointHandle
-from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
-from walbox.checkpoint import FileCheckpointStore
-from walbox.client import ReplicationClient
+from walbox.abc import WalboxOptions
+from walbox.checkpoint import PostgresCheckpointStore
+from walbox.client import WalboxClient
 
 pytestmark = pytest.mark.postgres
 
 
 def _unique_slot_name() -> str:
     return f"slot_{uuid.uuid4().hex}"
+
+
+def _unique_consumer_name() -> str:
+    return f"consumer_{uuid.uuid4().hex}"
 
 
 def _insert_row(entity_id: str) -> str:
@@ -45,7 +48,9 @@ class _RecordingHandler:
     transactions: list[Transaction] = field(default_factory=list)
 
     async def __call__(
-        self, transaction: Transaction, checkpoint: CheckpointHandle
+        self,
+        transaction: Transaction,
+        checkpoint: CheckpointHandle,
     ) -> None:
         self.transactions.append(transaction)
         await checkpoint.save(transaction.commit_lsn)
@@ -54,14 +59,20 @@ class _RecordingHandler:
 def _options(
     postgres_dsn: str,
     slot_name: str,
-    checkpoint_path: Path,
-) -> ReplicationOptions:
-    return ReplicationOptions(
-        consumer_name="test-consumer",
+    consumer_name: str,
+) -> WalboxOptions:
+    return WalboxOptions(
+        consumer_name=consumer_name,
         dsn=postgres_dsn,
         slot_name=slot_name,
         publication_name="walbox_pub",
-        checkpoint_store=FileCheckpointStore(checkpoint_path),
+    )
+
+
+def _client(postgres_dsn: str, slot_name: str, consumer_name: str) -> WalboxClient:
+    return WalboxClient(
+        _options(postgres_dsn, slot_name, consumer_name),
+        PostgresCheckpointStore(postgres_dsn, consumer_name=consumer_name),
     )
 
 
@@ -98,9 +109,9 @@ async def _terminate_backend(dsn: str, backend_pid: int) -> None:
 
 
 class _RunningClient:
-    """Runs a `ReplicationClient` as a background task for one test's lifetime."""
+    """Runs a `WalboxClient` as a background task for one test's lifetime."""
 
-    def __init__(self, client: ReplicationClient, handler) -> None:
+    def __init__(self, client: WalboxClient, handler) -> None:
         self._client = client
         self._task = asyncio.ensure_future(client.run(handler))
 
@@ -124,13 +135,12 @@ class _RunningClient:
 
 @pytest.mark.timeout(30)
 async def test_reconnect_after_a_dropped_connection_keeps_processing(
-    postgres_dsn, outbox_table, tmp_path
+    postgres_dsn,
+    outbox_table,
 ):
     slot_name = _unique_slot_name()
     handler = _RecordingHandler()
-    client = ReplicationClient(
-        _options(postgres_dsn, slot_name, tmp_path / "checkpoint")
-    )
+    client = _client(postgres_dsn, slot_name, _unique_consumer_name())
     running = _RunningClient(client, handler)
     try:
         await _wait_slot_active(postgres_dsn, slot_name)
@@ -155,7 +165,8 @@ async def test_reconnect_after_a_dropped_connection_keeps_processing(
 
 @pytest.mark.timeout(30)
 async def test_crash_before_checkpoint_redelivers_the_same_transaction(
-    postgres_dsn, outbox_table, tmp_path
+    postgres_dsn,
+    outbox_table,
 ):
     slot_name = _unique_slot_name()
     deliveries: list[Transaction] = []
@@ -168,9 +179,7 @@ async def test_crash_before_checkpoint_redelivers_the_same_transaction(
             await checkpoint.save(transaction.commit_lsn)
         deliveries.append(transaction)
 
-    client = ReplicationClient(
-        _options(postgres_dsn, slot_name, tmp_path / "checkpoint")
-    )
+    client = _client(postgres_dsn, slot_name, _unique_consumer_name())
     running = _RunningClient(client, handler)
     try:
         await _wait_slot_active(postgres_dsn, slot_name)
@@ -203,13 +212,12 @@ async def test_crash_before_checkpoint_redelivers_the_same_transaction(
 
 @pytest.mark.timeout(30)
 async def test_reconnect_does_not_skip_a_transaction_committed_just_before_the_drop(
-    postgres_dsn, outbox_table, tmp_path
+    postgres_dsn,
+    outbox_table,
 ):
     slot_name = _unique_slot_name()
     handler = _RecordingHandler()
-    client = ReplicationClient(
-        _options(postgres_dsn, slot_name, tmp_path / "checkpoint")
-    )
+    client = _client(postgres_dsn, slot_name, _unique_consumer_name())
     running = _RunningClient(client, handler)
     try:
         await _wait_slot_active(postgres_dsn, slot_name)

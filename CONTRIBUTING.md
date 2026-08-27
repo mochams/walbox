@@ -80,23 +80,14 @@ original design brief:
   code alone.
 - **Type everything**, especially protocol boundaries.
 - **Avoid giant "manager"/"handler"/"processor" classes.** `client.py`'s
-  `ReplicationClient` is the closest thing to one and is kept to delivery-lifecycle
+  `WalboxClient` is the closest thing to one and is kept to delivery-lifecycle
   orchestration only: decoding, assembly, and checkpointing all live in their own
   modules.
 - **Don't bury error handling in generic `except Exception` blocks.** The one
-  deliberate exception is the metrics callback boundary (Observability, RFC 07),
-  explicitly justified there.
+  deliberate exception is the metrics callback boundary: a misbehaving
+  `on_metrics` callback must never take down the replication loop.
 - **Make shutdown and cancellation explicit**, not an emergent side effect of
   cleanup code scattered across callbacks.
-
-## Adding a feature
-
-If a change is substantial enough to need a design record, write it up in
-[`docs/`](docs/README.md) as an RFC using the existing template (see any current
-`docs/rfc-*.md` for the shape: Depends on, Summary/Context, Goals and Non-Goals,
-Proposed Design, Pros/Cons, Implementation, Testing) rather than folding it
-silently into an existing one. A genuinely new feature deserves its own record,
-the same way the seven current RFCs are each scoped to one feature end to end.
 
 ## Pull requests
 
@@ -104,5 +95,7 @@ the same way the seven current RFCs are each scoped to one feature end to end.
   units of work over broad rewrites.
 - Add tests before or alongside the implementation, not after.
 - Run `make test lint typecheck` (or `make run_precommit`) before opening a PR.
-- If the change affects a documented design decision, update the relevant RFC in
-  the same PR rather than letting `docs/` drift from what's actually implemented.
+- If the change affects a documented design decision, update the relevant docs in
+  the same PR rather than letting them drift from what's actually implemented.
+- User-facing changes (new behavior, a fix, a breaking change) get an entry under
+  `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md), in the same PR.

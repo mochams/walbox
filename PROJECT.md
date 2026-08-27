@@ -19,8 +19,7 @@ what's still provisional; this document doesn't repeat that.
 
 The project was built incrementally, one feature at a time, each proven against a
 real PostgreSQL instance (via `testcontainers`) before moving to the next, never
-attempting the whole library in one pass. [`docs/`](docs/README.md) records the
-design decisions behind each feature as it stands today.
+attempting the whole library in one pass.
 
 ## Why these tools
 
@@ -54,18 +53,15 @@ design decisions behind each feature as it stands today.
   test, not just a unit test against hand-crafted bytes.
 - **`cryptography`** (dev-only), to generate a self-signed certificate for the
   TLS-specific integration test: the direct regression test for the reason
-  Replication Transport ([RFC 04](docs/rfc-04-replication-transport.md)) is built
-  the way it is.
+  Replication Transport is built the way it is.
 - **`psycopg-pool`** (dev-only), to prove `PostgresCheckpointStore.from_pool`
-  ([RFC 01](docs/rfc-01-checkpoint-store.md)) against a real
-  `psycopg_pool.AsyncConnectionPool`, not just a hand-rolled test double. walbox
-  itself never imports it: `from_pool` accepts anything structurally shaped like a
-  pool, so this dependency only exists to verify that the real package satisfies
-  that shape.
+  against a real `psycopg_pool.AsyncConnectionPool`, not just a hand-rolled test
+  double. walbox itself never imports it: `from_pool` accepts anything
+  structurally shaped like a pool, so this dependency only exists to verify that
+  the real package satisfies that shape.
 
 ## Development methodology
 
 Each feature was implemented as its own small, focused, independently reviewable
 unit of work, in dependency order, with tests added before or alongside the
-implementation, never a broad, unreviewable rewrite. `docs/` records the result of
-that process per feature, not the process itself.
+implementation, never a broad, unreviewable rewrite.

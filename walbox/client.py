@@ -18,11 +18,13 @@ from collections.abc import Callable
 from typing import TypeVar
 
 from walbox.abc import CheckpointHandle
+from walbox.abc import CheckpointStore
 from walbox.abc import Metrics
-from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
+from walbox.abc import WalboxOptions
 from walbox.errors import ReplicationConnectionError
 from walbox.pgoutput import Decoder
+from walbox.pgoutput import Message
 from walbox.pgoutput import Origin
 from walbox.pgoutput import Type
 from walbox.protocol import PrimaryKeepalive
@@ -53,12 +55,17 @@ def _next_backoff_value(current: float) -> float:
     return min(current * 2, _MAX_BACKOFF)
 
 
-class ReplicationClient:
+class WalboxClient:
     """Consumes a PostgreSQL logical replication stream and dispatches transactions."""
 
-    def __init__(self, options: ReplicationOptions) -> None:
-        """Initialize with the client's replication options."""
+    def __init__(
+        self,
+        options: WalboxOptions,
+        checkpoint_store: CheckpointStore,
+    ) -> None:
+        """Initialize with the client's replication options and checkpoint store."""
         self.options = options
+        self.checkpoint_store = checkpoint_store
         self._transport: ReplicationTransport | None = None
         self._decoder = Decoder()
         self._assembler = TransactionAssembler()
@@ -129,7 +136,7 @@ class ReplicationClient:
                 await self._reconnect_delay(exc)
 
     async def _run_once(self, handler: Handler) -> None:
-        checkpoint_lsn = await self.options.checkpoint_store.load()
+        checkpoint_lsn = await self.checkpoint_store.load()
         if checkpoint_lsn is None:
             start_lsn = 0
             self._durable_lsn = 0
@@ -219,7 +226,7 @@ class ReplicationClient:
         self._last_written_lsn = max(self._last_written_lsn, xlog.wal_start)
         self._receive_lsn = max(self._receive_lsn, xlog.wal_start)
         pgoutput_message = self._decoder.decode(xlog.payload)
-        if isinstance(pgoutput_message, Type | Origin):
+        if isinstance(pgoutput_message, Type | Origin | Message):
             # Decoded fully (so the byte stream never desyncs) but not
             # actionable for the outbox pattern: logged and dropped here
             # rather than forwarded to the assembler.
@@ -303,8 +310,9 @@ class ReplicationClient:
 
     async def _process(self, transaction: Transaction, handler: Handler) -> None:
         checkpoint = CheckpointHandle(
-            self.options.checkpoint_store,
+            self.checkpoint_store,
             self._record_durable_progress,
+            transaction.commit_lsn,
         )
         self._transactions_processed += 1
         self._transactions_since_checkpoint += 1
@@ -340,6 +348,7 @@ class ReplicationClient:
 
     def _current_metrics(self) -> Metrics:
         return Metrics(
+            consumer_name=self.options.consumer_name,
             receive_lsn=self._receive_lsn,
             checkpoint_lsn=self._durable_lsn,
             replication_lag_bytes=self._last_keepalive_wal_end - self._receive_lsn,

@@ -5,19 +5,17 @@
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Async Python runtime for consuming PostgreSQL logical replication as a stream of committed transactions. Built for the **transactional outbox pattern**: write an outbox row in the same database transaction as your business data, then stream those committed inserts to an external system with no polling and no `LISTEN`/`NOTIFY`.
+Async Python runtime for consuming PostgreSQL logical replication as a stream of committed transactions. Built for the **transactional outbox pattern**: write an outbox row in the same database transaction as your business data, then stream those committed inserts to an external system with no polling and no `LISTEN`/`NOTIFY`. That's the common case. The same guarantees apply to any table you publish.
 
-**[📖 Documentation](https://mochams.github.io/walbox/) · [⚡ Quickstart](https://mochams.github.io/walbox/getting-started/quickstart/) · [🏗️ Architecture](ARCHITECTURE.md)**
+**[📖 Documentation](https://mochams.github.io/walbox/) · [⚡ Quickstart](https://mochams.github.io/walbox/getting-started/quickstart/)**
 
-## The problem
+## Some reasons you might want to use walbox
 
-Applications often need to update their database and publish an event to an external system as one logical operation. Doing both directly creates a dual-write problem: the database transaction can commit while the external publish fails, or the publish can succeed while the application crashes before recording that it was delivered.
-
-## The solution
-
-The **transactional outbox pattern** solves this by writing the business data and an outbox event in the same PostgreSQL transaction. The event is then delivered asynchronously to the external system.
-
-walbox takes the pattern a step further. It consumes committed outbox changes directly from PostgreSQL logical replication, so there is no polling loop and no `LISTEN/NOTIFY` coordination. Events become available from the database WAL as transactions commit, while durable checkpoints provide recovery and at-least-once delivery.
+- **You're using the transactional outbox pattern** and need a reliable way to consume outbox rows.
+- **You need to reliably tell another system about a change**, without polling a table or wiring up `LISTEN`/`NOTIFY` across processes.
+- **You want to avoid the dual-write problem** between your database and an external system.
+- **You want to use PostgreSQL's durability** without running a separate CDC platform for a simple use case.
+- **You need to stream changes from other tables too.** walbox works with any table covered by your publication.
 
 ## Guarantees
 
@@ -56,10 +54,9 @@ import asyncio
 from walbox import (
     ChangeKind,
     CheckpointHandle,
-    PostgresCheckpointStore,
-    ReplicationClient,
-    ReplicationOptions,
     Transaction,
+    WalboxBuilder,
+    WalboxOptions,
 )
 
 
@@ -71,17 +68,13 @@ async def handle(tx: Transaction, checkpoint: CheckpointHandle) -> None:
 
 
 async def main():
-    dsn = "postgresql://user:password@localhost/db"
-    checkpoint_store = PostgresCheckpointStore(dsn, consumer_name="app")
-    client = ReplicationClient(
-        ReplicationOptions(
-            consumer_name="app",
-            dsn=dsn,
-            slot_name="slot",
-            publication_name="walbox_pub",
-            checkpoint_store=checkpoint_store,
-        )
+    options = WalboxOptions(
+        consumer_name="app",
+        dsn="postgresql://user:password@localhost/db",
+        slot_name="slot",
+        publication_name="walbox_pub",
     )
+    client = WalboxBuilder.build(options)
     await client.run(handle)
 
 
@@ -97,7 +90,7 @@ INSERT INTO outbox (entity_type, entity_id, event_type, payload)
 VALUES ('user', '42', 'created', '{"name":"Alice"}'::jsonb);
 ```
 
-The handler receives the row and saves a durable checkpoint. On restart, it resumes from that checkpoint—no data loss.
+The handler receives the row and saves a durable checkpoint. On restart, it resumes from that checkpoint. No data loss.
 
 See [**Examples**](https://github.com/mochams/walbox/tree/main/examples) for working patterns: webhooks, message brokers, PostgreSQL sinks, and more.
 
@@ -110,5 +103,7 @@ See [**Examples**](https://github.com/mochams/walbox/tree/main/examples) for wor
 ## Status
 
 walbox is still in its early days. It is tested with 100% branch coverage and integration tests against real PostgreSQL, but the API may change as the project evolves toward 1.0.0.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for what's changed release to release.
 
 **Development**: see [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup and [`LICENSE`](LICENSE) for terms.

@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
-from walbox.client import ReplicationClient
+from walbox.abc import WalboxOptions
+from walbox.client import WalboxClient
 
 
 @dataclass
@@ -57,20 +57,19 @@ def _options(
     *,
     max_pending_transactions: int = 100,
     status_interval: int = 10,
-) -> ReplicationOptions:
-    return ReplicationOptions(
+) -> WalboxOptions:
+    return WalboxOptions(
         consumer_name="test-consumer",
         dsn="postgresql://example",
         slot_name="test_slot",
         publication_name="test_pub",
-        checkpoint_store=_FakeCheckpointStore(),
         max_pending_transactions=max_pending_transactions,
         status_interval=status_interval,
     )
 
 
-def _client(**kwargs: int) -> ReplicationClient:
-    """A `ReplicationClient` ready for direct `_enqueue`-family unit tests.
+def _client(**kwargs: int) -> WalboxClient:
+    """A `WalboxClient` ready for direct `_enqueue`-family unit tests.
 
     `_next_status_at` is normally only set for real by `_run_once`; a test
     that calls `_enqueue`/`_await_with_status_updates`
@@ -79,7 +78,7 @@ def _client(**kwargs: int) -> ReplicationClient:
     -- and needing a real `_transport` -- partway through an assertion that
     has nothing to do with status updates.
     """
-    client = ReplicationClient(_options(**kwargs))
+    client = WalboxClient(_options(**kwargs), _FakeCheckpointStore())
     client._transport = AsyncMock()
     client._next_status_at = time.monotonic() + 1000
     return client
@@ -149,7 +148,10 @@ async def test_enqueue_falls_back_to_blocking_put_when_the_queue_is_full():
 
 
 async def test_backpressured_receiver_still_sends_status_updates():
-    client = ReplicationClient(_options(max_pending_transactions=1, status_interval=1))
+    client = WalboxClient(
+        _options(max_pending_transactions=1, status_interval=1),
+        _FakeCheckpointStore(),
+    )
     client._transport = AsyncMock()
     client._next_status_at = time.monotonic()  # already "due"
     await client._enqueue(_transaction(xid=1))  # fills the queue (room=1)
@@ -166,7 +168,7 @@ async def test_backpressured_receiver_still_sends_status_updates():
 
 
 async def test_await_with_status_updates_never_duplicates_the_underlying_task():
-    client = ReplicationClient(_options(status_interval=1))
+    client = WalboxClient(_options(status_interval=1), _FakeCheckpointStore())
     client._transport = AsyncMock()
     client._next_status_at = time.monotonic()  # already "due"
     calls = 0
@@ -197,7 +199,7 @@ async def test_await_with_status_updates_cancels_the_underlying_task_when_cancel
     cleanup -- the exact leak that can crash a later, unrelated connection
     reusing the same fd, on Linux/epoll.
     """
-    client = ReplicationClient(_options(status_interval=1000))
+    client = WalboxClient(_options(status_interval=1000), _FakeCheckpointStore())
     client._transport = AsyncMock()
     client._next_status_at = time.monotonic() + 1000
 
@@ -236,7 +238,7 @@ async def test_close_unblocks_a_receiver_blocked_on_a_full_queue():
 
 
 async def test_close_unblocks_an_idle_consumer():
-    client = ReplicationClient(_options())
+    client = WalboxClient(_options(), _FakeCheckpointStore())
     handler = AsyncMock()
 
     consumer = asyncio.ensure_future(client._consume_loop(handler))

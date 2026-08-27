@@ -1,4 +1,4 @@
-"""Integration tests for `ReplicationClient.run` against a real Postgres.
+"""Integration tests for `WalboxClient.run` against a real Postgres.
 
 Exercises the guide's own "smallest vertical slice": connect, decode the
 byte stream, assemble transactions, and dispatch them to a handler --
@@ -18,9 +18,9 @@ from psycopg import AsyncConnection
 
 from walbox.abc import ChangeKind
 from walbox.abc import CheckpointHandle
-from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
-from walbox.client import ReplicationClient
+from walbox.abc import WalboxOptions
+from walbox.client import WalboxClient
 
 pytestmark = pytest.mark.postgres
 
@@ -49,19 +49,24 @@ class _RecordingHandler:
     transactions: list[Transaction] = field(default_factory=list)
 
     async def __call__(
-        self, transaction: Transaction, checkpoint: CheckpointHandle
+        self,
+        transaction: Transaction,
+        checkpoint: CheckpointHandle,
     ) -> None:
         self.transactions.append(transaction)
 
 
-def _options(postgres_dsn: str, slot_name: str) -> ReplicationOptions:
-    return ReplicationOptions(
+def _options(postgres_dsn: str, slot_name: str) -> WalboxOptions:
+    return WalboxOptions(
         consumer_name="test-consumer",
         dsn=postgres_dsn,
         slot_name=slot_name,
         publication_name="walbox_pub",
-        checkpoint_store=_FakeCheckpointStore(),
     )
+
+
+def _client(postgres_dsn: str, slot_name: str) -> WalboxClient:
+    return WalboxClient(_options(postgres_dsn, slot_name), _FakeCheckpointStore())
 
 
 async def _wait_for_count(
@@ -96,9 +101,9 @@ async def _wait_slot_active(
 
 
 class _RunningClient:
-    """Runs a `ReplicationClient` as a background task for one test's lifetime."""
+    """Runs a `WalboxClient` as a background task for one test's lifetime."""
 
-    def __init__(self, client: ReplicationClient, handler: _RecordingHandler) -> None:
+    def __init__(self, client: WalboxClient, handler: _RecordingHandler) -> None:
         self._client = client
         self._task = asyncio.ensure_future(client.run(handler))
 
@@ -121,7 +126,7 @@ async def _start_client(
     slot_name: str,
     handler: _RecordingHandler,
 ) -> AsyncIterator[_RunningClient]:
-    client = ReplicationClient(_options(postgres_dsn, slot_name))
+    client = _client(postgres_dsn, slot_name)
     running = _RunningClient(client, handler)
     await _wait_slot_active(postgres_dsn, slot_name)
     return running
@@ -154,7 +159,8 @@ async def test_basic_replication_delivers_a_single_insert(postgres_dsn, outbox_t
 
 
 async def test_multiple_inserts_in_one_transaction_arrive_as_one_transaction(
-    postgres_dsn, outbox_table
+    postgres_dsn,
+    outbox_table,
 ):
     slot_name = _unique_slot_name()
     handler = _RecordingHandler()
@@ -239,7 +245,8 @@ async def test_transactions_are_delivered_in_commit_order(postgres_dsn, outbox_t
 
 @pytest.mark.timeout(30)
 async def test_run_survives_a_keepalive_round_trip_without_erroring(
-    postgres_dsn, outbox_table
+    postgres_dsn,
+    outbox_table,
 ):
     async with await AsyncConnection.connect(postgres_dsn, autocommit=True) as admin:
         await admin.execute("ALTER SYSTEM SET wal_sender_timeout = '1s'")
@@ -247,7 +254,7 @@ async def test_run_survives_a_keepalive_round_trip_without_erroring(
     try:
         slot_name = _unique_slot_name()
         handler = _RecordingHandler()
-        client = ReplicationClient(_options(postgres_dsn, slot_name))
+        client = _client(postgres_dsn, slot_name)
 
         write_calls: list[bytes] = []
         original_new_transport = client._new_transport
@@ -279,7 +286,8 @@ async def test_run_survives_a_keepalive_round_trip_without_erroring(
                 client._transport.close()
     finally:
         async with await AsyncConnection.connect(
-            postgres_dsn, autocommit=True
+            postgres_dsn,
+            autocommit=True,
         ) as admin:
             await admin.execute("ALTER SYSTEM RESET wal_sender_timeout")
             await admin.execute("SELECT pg_reload_conf()")

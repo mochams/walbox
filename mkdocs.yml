@@ -5,7 +5,7 @@ site_url: https://mochams.github.io/walbox/
 repo_name: mochams/walbox
 repo_url: https://github.com/mochams/walbox
 
-docs_dir: pages
+docs_dir: docs
 site_dir: site
 
 strict: true
@@ -27,13 +27,13 @@ theme:
         name: "Switch to light mode"
 
   favicon: img/walbox-art.svg
+  logo: img/walbox-light.svg
 
   font:
     text: Fira Sans
     code: JetBrains Mono
 
   icon:
-    logo: material/bolt
     repo: fontawesome/brands/github
 
   features:
@@ -69,13 +69,9 @@ nav:
       - Quickstart: getting-started/quickstart.md
   - Production:
       - Architecture: production/architecture.md
-      - Guarantees: production/delivery-guarantees.md
-      - Setup: production/setup.md
-      - Checkpointing: production/checkpointing-recovery.md
-      - Lifecycle: production/shutdown-lifecycle.md
-      - Backpressure: production/backpressure-large-transactions.md
-      - Monitoring: production/monitoring.md
-      - Deployment: production/deployment.md
+      - Delivery Guarantees: production/delivery-guarantees.md
+      - Setup & Deployment: production/setup.md
+      - Monitoring & Backpressure: production/monitoring.md
   - Examples:
       - Outbox: examples/transactional-outbox.md
       - PostgreSQL: examples/postgresql.md
@@ -83,3 +79,4 @@ nav:
       - Temporal: examples/temporal.md
       - RabbitMQ: examples/rabbitmq.md
       - Webhooks: examples/webhooks.md
+  - Changelog: https://github.com/mochams/walbox/blob/main/CHANGELOG.md

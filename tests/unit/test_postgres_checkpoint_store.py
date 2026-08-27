@@ -10,8 +10,10 @@ row-missing -- is exercised without Docker.
 from unittest.mock import AsyncMock
 
 import psycopg
+import pytest
 
 from walbox.checkpoint import PostgresCheckpointStore
+from walbox.errors import CheckpointError
 
 
 class _FakeCursor:
@@ -87,6 +89,19 @@ async def test_load_returns_the_saved_lsn_when_a_row_exists(monkeypatch):
     store = PostgresCheckpointStore("dsn", consumer_name="consumer")
 
     assert await store.load() == 100
+
+
+async def test_load_raises_checkpoint_error_for_a_negative_lsn(monkeypatch):
+    fake_conn = _FakeConnection(row=(-1,))
+    monkeypatch.setattr(
+        psycopg.AsyncConnection,
+        "connect",
+        AsyncMock(return_value=fake_conn),
+    )
+    store = PostgresCheckpointStore("dsn", consumer_name="consumer")
+
+    with pytest.raises(CheckpointError):
+        await store.load()
 
 
 async def test_load_commits_after_ensuring_the_schema(monkeypatch):

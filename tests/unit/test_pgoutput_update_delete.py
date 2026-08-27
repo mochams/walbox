@@ -26,7 +26,9 @@ def _things_relation(relation_id: int = 1) -> Relation:
 
 
 def _tuple_data(
-    values: list[tuple[str, str | None]], *, unchanged: set[str] = frozenset()
+    values: list[tuple[str, str | None]],
+    *,
+    unchanged: set[str] = frozenset(),
 ) -> bytes:
     body = len(values).to_bytes(2, "big")
     for name, value in values:

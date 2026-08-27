@@ -2,11 +2,11 @@
 
 Decodes the pgoutput sub-protocol carried as the opaque `payload` bytes
 inside an `XLogData` message. Covers `Relation`, `Begin`, `Insert`,
-`Update`, `Delete`, `Commit`, `Truncate`, `Type`, `Origin`, and the four
-`Stream*` kinds used for PostgreSQL's streamed (in-progress) transactions.
-`Type` and `Origin` are decoded fully but never acted on: `client.py` logs
-and discards them. Any other message kind raises `DecodeError` rather than
-being silently ignored.
+`Update`, `Delete`, `Commit`, `Truncate`, `Type`, `Origin`, `Message`, and
+the four `Stream*` kinds used for PostgreSQL's streamed (in-progress)
+transactions. `Type`, `Origin`, and `Message` are decoded fully but never
+acted on: `client.py` logs and discards them. Any other message kind
+raises `DecodeError` rather than being silently ignored.
 
 Every non-null column value arrives in Postgres's text format, so column
 values decode to `str | None` exactly as sent, with no coercion to native
@@ -173,6 +173,22 @@ class Origin:
 
 
 @dataclass(frozen=True, slots=True)
+class Message:
+    """A `pg_logical_emit_message()` message, decoded but never acted on.
+
+    Same treatment as `Type`/`Origin`: logged and discarded. It doesn't
+    correspond to a row change, and only appears at all if a publication
+    has the `message` publish option enabled, which walbox's own setup
+    guidance never turns on.
+    """
+
+    transactional: bool
+    lsn: int
+    prefix: str
+    content: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class StreamStart:
     """Marks the start of one chunk of a streamed (in-progress) transaction.
 
@@ -234,6 +250,7 @@ PgoutputMessage = (
     | Truncate
     | Type
     | Origin
+    | Message
     | StreamStart
     | StreamStop
     | StreamCommit
@@ -677,6 +694,41 @@ def decode_origin(payload: bytes) -> Origin:
     return Origin(origin_lsn=origin_lsn, name=name)
 
 
+def decode_message(payload: bytes, *, streaming: bool = False) -> Message:
+    """Decode a `Message` ('M') message.
+
+    `streaming=True` means a leading `Int32 xid` field is present before the
+    flags byte and must be skipped; `Message` never carries an xid itself.
+
+    Returns:
+        The decoded `Message`.
+
+    Raises:
+        DecodeError: If `payload` has the wrong leading byte.
+    """
+    if payload[0:1] != b"M":
+        message = "not a valid Message message"
+        raise DecodeError(message, context=ErrorContext(message_type="Message"))
+    offset = 1
+    if streaming:
+        offset += 4  # leading Xid, decoded but not retained on Message
+    transactional = bool(payload[offset])
+    offset += 1
+    lsn = int.from_bytes(payload[offset : offset + 8], "big")
+    offset += 8
+    prefix, offset = _read_cstring(payload, offset)
+    length = int.from_bytes(payload[offset : offset + 4], "big")
+    offset += 4
+    content = payload[offset : offset + length]
+    logger.debug(
+        "decoded Message message prefix=%s transactional=%s",
+        prefix,
+        transactional,
+        extra={"message_type": "Message", "lsn": lsn},
+    )
+    return Message(transactional=transactional, lsn=lsn, prefix=prefix, content=content)
+
+
 def decode_stream_start(payload: bytes) -> StreamStart:
     """Decode a `StreamStart` ('S') message.
 
@@ -767,6 +819,14 @@ _STATELESS_DECODERS: dict[bytes, Callable[[bytes], PgoutputMessage]] = {
     b"O": decode_origin,
 }
 
+_STREAMING_AWARE_DECODERS: dict[
+    bytes,
+    Callable[..., PgoutputMessage],
+] = {
+    b"Y": decode_type,
+    b"M": decode_message,
+}
+
 _STREAMING_AWARE_RELATION_DECODERS: dict[
     bytes,
     Callable[..., PgoutputMessage],
@@ -817,8 +877,11 @@ class Decoder:
             relation = decode_relation(payload, streaming=self._streaming_active)
             self._relations.add(relation)
             return relation
-        if kind == b"Y":
-            return decode_type(payload, streaming=self._streaming_active)
+        if kind in _STREAMING_AWARE_DECODERS:
+            return _STREAMING_AWARE_DECODERS[kind](
+                payload,
+                streaming=self._streaming_active,
+            )
         if kind in _STREAMING_AWARE_RELATION_DECODERS:
             return _STREAMING_AWARE_RELATION_DECODERS[kind](
                 payload,

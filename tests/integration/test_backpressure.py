@@ -10,17 +10,16 @@ grow instead -- proving backpressure is real, not just locally invisible.
 import asyncio
 import contextlib
 import uuid
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 from psycopg import AsyncConnection
 
 from walbox.abc import CheckpointHandle
-from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
-from walbox.checkpoint import FileCheckpointStore
-from walbox.client import ReplicationClient
+from walbox.abc import WalboxOptions
+from walbox.checkpoint import PostgresCheckpointStore
+from walbox.client import WalboxClient
 
 pytestmark = pytest.mark.postgres
 
@@ -30,6 +29,10 @@ _MAX_PENDING = 3
 
 def _unique_slot_name() -> str:
     return f"slot_{uuid.uuid4().hex}"
+
+
+def _unique_consumer_name() -> str:
+    return f"consumer_{uuid.uuid4().hex}"
 
 
 async def _insert_rows(dsn: str, count: int) -> None:
@@ -76,23 +79,22 @@ def _decode_flushed_lsn(payload: bytes) -> int:
 def _options(
     postgres_dsn: str,
     slot_name: str,
-    checkpoint_path: Path,
-) -> ReplicationOptions:
-    return ReplicationOptions(
-        consumer_name="test-consumer",
+    consumer_name: str,
+) -> WalboxOptions:
+    return WalboxOptions(
+        consumer_name=consumer_name,
         dsn=postgres_dsn,
         slot_name=slot_name,
         publication_name="walbox_pub",
-        checkpoint_store=FileCheckpointStore(checkpoint_path),
         max_pending_transactions=_MAX_PENDING,
         status_interval=_STATUS_INTERVAL,
     )
 
 
 class _RunningClient:
-    """Runs a `ReplicationClient` as a background task for one test's lifetime."""
+    """Runs a `WalboxClient` as a background task for one test's lifetime."""
 
-    def __init__(self, client: ReplicationClient, handler) -> None:
+    def __init__(self, client: WalboxClient, handler) -> None:
         self._client = client
         self._task = asyncio.ensure_future(client.run(handler))
 
@@ -113,11 +115,11 @@ class _RunningClient:
 class _QueueSizeSampler:
     """Polls a client's queue depth in the background until stopped."""
 
-    def __init__(self, client: ReplicationClient, interval: float = 0.02) -> None:
+    def __init__(self, client: WalboxClient, interval: float = 0.02) -> None:
         self.samples: list[int] = []
         self._task = asyncio.ensure_future(self._run(client, interval))
 
-    async def _run(self, client: ReplicationClient, interval: float) -> None:
+    async def _run(self, client: WalboxClient, interval: float) -> None:
         while True:
             self.samples.append(client._queue.qsize())
             await asyncio.sleep(interval)
@@ -130,7 +132,8 @@ class _QueueSizeSampler:
 
 @pytest.mark.timeout(30)
 async def test_bounded_queue_keeps_memory_bounded_under_a_slow_handler(
-    postgres_dsn, outbox_table, tmp_path
+    postgres_dsn,
+    outbox_table,
 ):
     slot_name = _unique_slot_name()
     started = asyncio.Event()
@@ -140,8 +143,13 @@ async def test_bounded_queue_keeps_memory_bounded_under_a_slow_handler(
         started.set()
         await release.wait()
 
-    client = ReplicationClient(
-        _options(postgres_dsn, slot_name, tmp_path / "checkpoint")
+    consumer_name = _unique_consumer_name()
+    client = WalboxClient(
+        _options(postgres_dsn, slot_name, consumer_name),
+        checkpoint_store=PostgresCheckpointStore(
+            postgres_dsn,
+            consumer_name=consumer_name,
+        ),
     )
     running = _RunningClient(client, handler)
     sampler = _QueueSizeSampler(client)
@@ -165,7 +173,8 @@ async def test_bounded_queue_keeps_memory_bounded_under_a_slow_handler(
 
 @pytest.mark.timeout(30)
 async def test_feedback_does_not_advance_while_backpressured(
-    postgres_dsn, outbox_table, tmp_path
+    postgres_dsn,
+    outbox_table,
 ):
     slot_name = _unique_slot_name()
     started = asyncio.Event()
@@ -175,8 +184,13 @@ async def test_feedback_does_not_advance_while_backpressured(
         started.set()
         await release.wait()
 
-    client = ReplicationClient(
-        _options(postgres_dsn, slot_name, tmp_path / "checkpoint")
+    consumer_name = _unique_consumer_name()
+    client = WalboxClient(
+        _options(postgres_dsn, slot_name, consumer_name),
+        checkpoint_store=PostgresCheckpointStore(
+            postgres_dsn,
+            consumer_name=consumer_name,
+        ),
     )
 
     write_calls: list[bytes] = []
@@ -215,7 +229,8 @@ async def test_feedback_does_not_advance_while_backpressured(
 
 @pytest.mark.timeout(30)
 async def test_replication_lag_grows_instead_of_the_process_buffering_unboundedly(
-    postgres_dsn, outbox_table, tmp_path
+    postgres_dsn,
+    outbox_table,
 ):
     slot_name = _unique_slot_name()
     started = asyncio.Event()
@@ -225,8 +240,13 @@ async def test_replication_lag_grows_instead_of_the_process_buffering_unboundedl
         started.set()
         await release.wait()
 
-    client = ReplicationClient(
-        _options(postgres_dsn, slot_name, tmp_path / "checkpoint")
+    consumer_name = _unique_consumer_name()
+    client = WalboxClient(
+        _options(postgres_dsn, slot_name, consumer_name),
+        checkpoint_store=PostgresCheckpointStore(
+            postgres_dsn,
+            consumer_name=consumer_name,
+        ),
     )
     running = _RunningClient(client, handler)
     sampler = _QueueSizeSampler(client)

@@ -1,6 +1,6 @@
 """Integration tests for Truncate decoding and live schema-change pickup.
 
-Exercises `TRUNCATE` end to end through `ReplicationClient` (the outbox
+Exercises `TRUNCATE` end to end through `WalboxClient` (the outbox
 table's default publication already includes `truncate` -- PostgreSQL's
 `publish` option defaults to `'insert, update, delete, truncate'`), and
 proves `RelationCache.add`'s overwrite-on-redefinition behavior works live
@@ -10,7 +10,6 @@ against a real `ALTER TABLE ... ADD COLUMN`, not just at connect time.
 import asyncio
 import contextlib
 import uuid
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from dataclasses import field
 
@@ -19,9 +18,9 @@ from psycopg import AsyncConnection
 
 from walbox.abc import ChangeKind
 from walbox.abc import CheckpointHandle
-from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
-from walbox.client import ReplicationClient
+from walbox.abc import WalboxOptions
+from walbox.client import WalboxClient
 
 pytestmark = pytest.mark.postgres
 
@@ -50,19 +49,24 @@ class _RecordingHandler:
     transactions: list[Transaction] = field(default_factory=list)
 
     async def __call__(
-        self, transaction: Transaction, checkpoint: CheckpointHandle
+        self,
+        transaction: Transaction,
+        checkpoint: CheckpointHandle,
     ) -> None:
         self.transactions.append(transaction)
 
 
-def _options(postgres_dsn: str, slot_name: str) -> ReplicationOptions:
-    return ReplicationOptions(
+def _options(postgres_dsn: str, slot_name: str) -> WalboxOptions:
+    return WalboxOptions(
         consumer_name="test-consumer",
         dsn=postgres_dsn,
         slot_name=slot_name,
         publication_name="walbox_pub",
-        checkpoint_store=_FakeCheckpointStore(),
     )
+
+
+def _client(postgres_dsn: str, slot_name: str) -> WalboxClient:
+    return WalboxClient(_options(postgres_dsn, slot_name), _FakeCheckpointStore())
 
 
 async def _wait_for_count(
@@ -97,9 +101,9 @@ async def _wait_slot_active(
 
 
 class _RunningClient:
-    """Runs a `ReplicationClient` as a background task for one test's lifetime."""
+    """Runs a `WalboxClient` as a background task for one test's lifetime."""
 
-    def __init__(self, client: ReplicationClient, handler: _RecordingHandler) -> None:
+    def __init__(self, client: WalboxClient, handler: _RecordingHandler) -> None:
         self._client = client
         self._task = asyncio.ensure_future(client.run(handler))
 
@@ -122,7 +126,7 @@ async def _start_client(
     slot_name: str,
     handler: _RecordingHandler,
 ) -> _RunningClient:
-    client = ReplicationClient(_options(postgres_dsn, slot_name))
+    client = _client(postgres_dsn, slot_name)
     running = _RunningClient(client, handler)
     await _wait_slot_active(postgres_dsn, slot_name)
     return running
@@ -170,7 +174,7 @@ async def test_schema_change_mid_stream_picks_up_new_column(postgres_dsn, outbox
 
         async with await AsyncConnection.connect(postgres_dsn, autocommit=True) as conn:
             await conn.execute(
-                "ALTER TABLE outbox ADD COLUMN priority int NOT NULL DEFAULT 0"
+                "ALTER TABLE outbox ADD COLUMN priority int NOT NULL DEFAULT 0",
             )
             await conn.execute(
                 "INSERT INTO outbox (entity_type, entity_id, event_type, payload, priority) "

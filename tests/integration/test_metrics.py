@@ -17,9 +17,9 @@ import pytest
 from psycopg import AsyncConnection
 
 from walbox.abc import CheckpointHandle
-from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
-from walbox.client import ReplicationClient
+from walbox.abc import WalboxOptions
+from walbox.client import WalboxClient
 
 pytestmark = pytest.mark.postgres
 
@@ -44,19 +44,24 @@ class _RecordingHandler:
     transactions: list[Transaction] = field(default_factory=list)
 
     async def __call__(
-        self, transaction: Transaction, checkpoint: CheckpointHandle
+        self,
+        transaction: Transaction,
+        checkpoint: CheckpointHandle,
     ) -> None:
         self.transactions.append(transaction)
 
 
-def _options(postgres_dsn: str, slot_name: str) -> ReplicationOptions:
-    return ReplicationOptions(
+def _options(postgres_dsn: str, slot_name: str) -> WalboxOptions:
+    return WalboxOptions(
         consumer_name="test-consumer",
         dsn=postgres_dsn,
         slot_name=slot_name,
         publication_name="walbox_pub",
-        checkpoint_store=_FakeCheckpointStore(),
     )
+
+
+def _client(postgres_dsn: str, slot_name: str) -> WalboxClient:
+    return WalboxClient(_options(postgres_dsn, slot_name), _FakeCheckpointStore())
 
 
 async def _wait_for_count(
@@ -91,18 +96,21 @@ async def _wait_slot_active(
 
 
 async def test_log_records_include_xid_and_lsn_context(
-    postgres_dsn, outbox_table, caplog
+    postgres_dsn,
+    outbox_table,
+    caplog,
 ):
     slot_name = _unique_slot_name()
     handler = _RecordingHandler()
-    client = ReplicationClient(_options(postgres_dsn, slot_name))
+    client = _client(postgres_dsn, slot_name)
 
     task = asyncio.ensure_future(client.run(handler))
     try:
         await _wait_slot_active(postgres_dsn, slot_name)
         with caplog.at_level(logging.DEBUG, logger="walbox.transaction"):
             async with await AsyncConnection.connect(
-                postgres_dsn, autocommit=True
+                postgres_dsn,
+                autocommit=True,
             ) as conn:
                 await conn.execute(
                     "INSERT INTO outbox (entity_type, entity_id, event_type, payload) "

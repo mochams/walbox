@@ -3,23 +3,25 @@
 from walbox.abc import ChangeEvent
 from walbox.abc import ChangeKind
 from walbox.abc import CheckpointHandle
-from walbox.abc import CheckpointStore
-from walbox.abc import ReplicationOptions
+from walbox.abc import Metrics
+from walbox.abc import MetricsCallback
 from walbox.abc import Transaction
-from walbox.checkpoint import FileCheckpointStore
-from walbox.checkpoint import PostgresCheckpointStore
-from walbox.client import ReplicationClient
+from walbox.abc import WalboxOptions
+from walbox.builder import WalboxBuilder
+from walbox.checkpoint import ConnectionPool
+from walbox.client import WalboxClient
 from walbox.errors import WalboxError
 
 __all__ = [
     "ChangeEvent",
     "ChangeKind",
     "CheckpointHandle",
-    "CheckpointStore",
-    "FileCheckpointStore",
-    "PostgresCheckpointStore",
-    "ReplicationClient",
-    "ReplicationOptions",
+    "ConnectionPool",
+    "Metrics",
+    "MetricsCallback",
     "Transaction",
+    "WalboxBuilder",
+    "WalboxClient",
     "WalboxError",
+    "WalboxOptions",
 ]
