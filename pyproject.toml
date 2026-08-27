@@ -21,10 +21,13 @@ keywords = [
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Framework :: AsyncIO",
     "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
-    "Framework :: AsyncIO",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Database",
     "Typing :: Typed",
 ]
@@ -32,6 +35,7 @@ dependencies = ["psycopg>=3.0,<4"]
 
 [project.urls]
 Homepage = "https://github.com/mochams/walbox"
+Documentation = "https://mochams.github.io/walbox/"
 Repository = "https://github.com/mochams/walbox"
 Issues = "https://github.com/mochams/walbox/issues"
 Author = "https://github.com/mochams"
@@ -40,9 +44,12 @@ Author = "https://github.com/mochams"
 [dependency-groups]
 dev = [
     "cryptography>=50.0.0",
+    "mkdocs==1.6.1",
+    "mkdocs-material==9.7.7",
     "prek>=0.4.13",
     "psycopg-pool>=3.3.1",
     "psycopg[binary]>=3.2",
+    "pylinkvalidator==0.3",
     "pyrefly>=1.2.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
@@ -61,7 +68,7 @@ module-root = "."
 # ==== Ruff ====
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
-extend-exclude = ["docs"]
+extend-exclude = ["docs", "pages"]
 
 # Python line length and indent width
 line-length = 88
@@ -144,7 +151,7 @@ max-args = 7
 # === Pyrefly ===
 [tool.pyrefly]
 min-severity = "warn"
-project-excludes = ["tests", "docs", "examples"]
+project-excludes = ["tests", "docs", "examples", "pages"]
 
 
 # === Pytest ===

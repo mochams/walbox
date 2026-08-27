@@ -1,0 +1,85 @@
+site_name: Walbox
+site_description: Async Python runtime for consuming PostgreSQL logical replication
+site_url: https://mochams.github.io/walbox/
+
+repo_name: mochams/walbox
+repo_url: https://github.com/mochams/walbox
+
+docs_dir: pages
+site_dir: site
+
+strict: true
+
+theme:
+  name: material
+
+  palette:
+    - scheme: "default"
+      media: "(prefers-color-scheme: light)"
+      toggle:
+        icon: "material/lightbulb"
+        name: "Switch to dark mode"
+
+    - scheme: "slate"
+      media: "(prefers-color-scheme: dark)"
+      toggle:
+        icon: "material/lightbulb-outline"
+        name: "Switch to light mode"
+
+  favicon: img/walbox-art.svg
+
+  font:
+    text: Fira Sans
+    code: JetBrains Mono
+
+  icon:
+    logo: material/bolt
+    repo: fontawesome/brands/github
+
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+
+extra_css:
+  - css/custom.css
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - footnotes
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Introduction: getting-started/introduction.md
+      - Quickstart: getting-started/quickstart.md
+  - Production:
+      - Architecture: production/architecture.md
+      - Guarantees: production/delivery-guarantees.md
+      - Setup: production/setup.md
+      - Checkpointing: production/checkpointing-recovery.md
+      - Lifecycle: production/shutdown-lifecycle.md
+      - Backpressure: production/backpressure-large-transactions.md
+      - Monitoring: production/monitoring.md
+      - Deployment: production/deployment.md
+  - Examples:
+      - Outbox: examples/transactional-outbox.md
+      - PostgreSQL: examples/postgresql.md
+      - NATS: examples/nats.md
+      - Temporal: examples/temporal.md
+      - RabbitMQ: examples/rabbitmq.md
+      - Webhooks: examples/webhooks.md
