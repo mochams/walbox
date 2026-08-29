@@ -27,7 +27,7 @@ async def handle(tx: Transaction, checkpoint: CheckpointHandle, *, pool) -> None
 
 # In main()
 async with AsyncConnectionPool(dsn, min_size=5, max_size=10) as pool:
-    client = WalboxBuilder.build_with_pool(options, pool)
+    client = Walbox.build_with_pool(options, pool)
     await client.run(functools.partial(handle, pool=pool))
 ```
 

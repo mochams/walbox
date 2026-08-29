@@ -19,7 +19,7 @@ from psycopg import AsyncConnection
 from walbox.abc import CheckpointHandle
 from walbox.abc import Transaction
 from walbox.abc import WalboxOptions
-from walbox.client import WalboxClient
+from walbox.client import Client
 
 pytestmark = pytest.mark.postgres
 
@@ -60,8 +60,8 @@ def _options(postgres_dsn: str, slot_name: str) -> WalboxOptions:
     )
 
 
-def _client(postgres_dsn: str, slot_name: str) -> WalboxClient:
-    return WalboxClient(_options(postgres_dsn, slot_name), _FakeCheckpointStore())
+def _client(postgres_dsn: str, slot_name: str) -> Client:
+    return Client(_options(postgres_dsn, slot_name), _FakeCheckpointStore())
 
 
 async def _wait_for_count(

@@ -1,7 +1,7 @@
 """Integration tests for reconnect/resume against a real Postgres.
 
 Uses `pg_terminate_backend` (the same technique `tests/integration/test_transport.py`
-uses) to simulate an abrupt disconnection, and asserts `WalboxClient.run`
+uses) to simulate an abrupt disconnection, and asserts `Client.run`
 reconnects and always resumes from the durable checkpoint -- redelivering a
 transaction that was never checkpointed, but never one that was.
 """
@@ -19,7 +19,7 @@ from walbox.abc import CheckpointHandle
 from walbox.abc import Transaction
 from walbox.abc import WalboxOptions
 from walbox.checkpoint import PostgresCheckpointStore
-from walbox.client import WalboxClient
+from walbox.client import Client
 
 pytestmark = pytest.mark.postgres
 
@@ -69,8 +69,8 @@ def _options(
     )
 
 
-def _client(postgres_dsn: str, slot_name: str, consumer_name: str) -> WalboxClient:
-    return WalboxClient(
+def _client(postgres_dsn: str, slot_name: str, consumer_name: str) -> Client:
+    return Client(
         _options(postgres_dsn, slot_name, consumer_name),
         PostgresCheckpointStore(postgres_dsn, consumer_name=consumer_name),
     )
@@ -109,9 +109,9 @@ async def _terminate_backend(dsn: str, backend_pid: int) -> None:
 
 
 class _RunningClient:
-    """Runs a `WalboxClient` as a background task for one test's lifetime."""
+    """Runs a `Client` as a background task for one test's lifetime."""
 
-    def __init__(self, client: WalboxClient, handler) -> None:
+    def __init__(self, client: Client, handler) -> None:
         self._client = client
         self._task = asyncio.ensure_future(client.run(handler))
 

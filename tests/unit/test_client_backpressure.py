@@ -14,7 +14,7 @@ import pytest
 
 from walbox.abc import Transaction
 from walbox.abc import WalboxOptions
-from walbox.client import WalboxClient
+from walbox.client import Client
 
 
 @dataclass
@@ -68,8 +68,8 @@ def _options(
     )
 
 
-def _client(**kwargs: int) -> WalboxClient:
-    """A `WalboxClient` ready for direct `_enqueue`-family unit tests.
+def _client(**kwargs: int) -> Client:
+    """A `Client` ready for direct `_enqueue`-family unit tests.
 
     `_next_status_at` is normally only set for real by `_run_once`; a test
     that calls `_enqueue`/`_await_with_status_updates`
@@ -78,7 +78,7 @@ def _client(**kwargs: int) -> WalboxClient:
     -- and needing a real `_transport` -- partway through an assertion that
     has nothing to do with status updates.
     """
-    client = WalboxClient(_options(**kwargs), _FakeCheckpointStore())
+    client = Client(_options(**kwargs), _FakeCheckpointStore())
     client._transport = AsyncMock()
     client._next_status_at = time.monotonic() + 1000
     return client
@@ -148,7 +148,7 @@ async def test_enqueue_falls_back_to_blocking_put_when_the_queue_is_full():
 
 
 async def test_backpressured_receiver_still_sends_status_updates():
-    client = WalboxClient(
+    client = Client(
         _options(max_pending_transactions=1, status_interval=1),
         _FakeCheckpointStore(),
     )
@@ -168,7 +168,7 @@ async def test_backpressured_receiver_still_sends_status_updates():
 
 
 async def test_await_with_status_updates_never_duplicates_the_underlying_task():
-    client = WalboxClient(_options(status_interval=1), _FakeCheckpointStore())
+    client = Client(_options(status_interval=1), _FakeCheckpointStore())
     client._transport = AsyncMock()
     client._next_status_at = time.monotonic()  # already "due"
     calls = 0
@@ -199,7 +199,7 @@ async def test_await_with_status_updates_cancels_the_underlying_task_when_cancel
     cleanup -- the exact leak that can crash a later, unrelated connection
     reusing the same fd, on Linux/epoll.
     """
-    client = WalboxClient(_options(status_interval=1000), _FakeCheckpointStore())
+    client = Client(_options(status_interval=1000), _FakeCheckpointStore())
     client._transport = AsyncMock()
     client._next_status_at = time.monotonic() + 1000
 
@@ -238,7 +238,7 @@ async def test_close_unblocks_a_receiver_blocked_on_a_full_queue():
 
 
 async def test_close_unblocks_an_idle_consumer():
-    client = WalboxClient(_options(), _FakeCheckpointStore())
+    client = Client(_options(), _FakeCheckpointStore())
     handler = AsyncMock()
 
     consumer = asyncio.ensure_future(client._consume_loop(handler))

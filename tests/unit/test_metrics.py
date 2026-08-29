@@ -19,7 +19,7 @@ from walbox.abc import CheckpointStore
 from walbox.abc import Metrics
 from walbox.abc import Transaction
 from walbox.abc import WalboxOptions
-from walbox.client import WalboxClient
+from walbox.client import Client
 from walbox.protocol import PrimaryKeepalive
 from walbox.protocol import XLogData
 
@@ -52,8 +52,8 @@ def _client(
     *,
     checkpoint_store: CheckpointStore | None = None,
     **kwargs: object,
-) -> WalboxClient:
-    return WalboxClient(
+) -> Client:
+    return Client(
         _options(**kwargs),
         checkpoint_store if checkpoint_store is not None else _FakeCheckpointStore(),
     )

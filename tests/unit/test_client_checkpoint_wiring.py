@@ -16,7 +16,7 @@ from walbox.abc import CheckpointHandle
 from walbox.abc import Transaction
 from walbox.abc import WalboxOptions
 from walbox.client import Handler
-from walbox.client import WalboxClient
+from walbox.client import Client
 from walbox.errors import CheckpointError
 from walbox.protocol import XLogData
 
@@ -67,7 +67,7 @@ def _commit_payload(
     )
 
 
-async def _feed_one_transaction(client: WalboxClient, handler: Handler) -> None:
+async def _feed_one_transaction(client: Client, handler: Handler) -> None:
     """Assemble a synthetic Begin/Commit sequence and process the result.
 
     `_handle_xlog_data` only decodes and enqueues; the checkpoint/handler
@@ -90,7 +90,7 @@ async def _feed_one_transaction(client: WalboxClient, handler: Handler) -> None:
 
 async def test_handler_receives_a_checkpoint_handle_as_its_second_argument():
     store = _RecordingCheckpointStore()
-    client = WalboxClient(_options(), store)
+    client = Client(_options(), store)
     seen: list[tuple[Transaction, CheckpointHandle]] = []
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
@@ -111,7 +111,7 @@ async def test_client_never_calls_save_automatically():
     many transactions are processed.
     """
     store = _RecordingCheckpointStore()
-    client = WalboxClient(_options(), store)
+    client = Client(_options(), store)
     handler = AsyncMock()
 
     await _feed_one_transaction(client, handler)
@@ -121,7 +121,7 @@ async def test_client_never_calls_save_automatically():
 
 async def test_handler_calling_checkpoint_save_is_what_persists_progress():
     store = _RecordingCheckpointStore()
-    client = WalboxClient(_options(), store)
+    client = Client(_options(), store)
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         await checkpoint.save(transaction.commit_lsn)
@@ -138,7 +138,7 @@ async def test_process_rejects_a_handler_save_above_the_dispatched_transaction()
     before it ever reaches the store.
     """
     store = _RecordingCheckpointStore()
-    client = WalboxClient(_options(), store)
+    client = Client(_options(), store)
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         await checkpoint.save(150)

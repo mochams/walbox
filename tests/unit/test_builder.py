@@ -1,16 +1,16 @@
-"""Unit tests for `WalboxBuilder`.
+"""Unit tests for `Walbox`.
 
 Pure, no Postgres: `build()` and `build_with_pool()` are both checked by
-inspecting the wired `WalboxClient.options`. `build_with_pool()` is
+inspecting the wired `Client.options`. `build_with_pool()` is
 given a fake `ConnectionPool`-shaped double, the same pattern
 `test_postgres_checkpoint_store.py` uses for `from_pool`, since walbox no
 longer constructs or imports any pool implementation itself.
 """
 
 from walbox.abc import WalboxOptions
-from walbox.builder import WalboxBuilder
+from walbox.builder import Walbox
 from walbox.checkpoint import PostgresCheckpointStore
-from walbox.client import WalboxClient
+from walbox.client import Client
 
 
 class _FakeConnection:
@@ -52,9 +52,9 @@ def test_build_returns_a_replication_client_wired_from_walbox_options():
         on_metrics=on_metrics,
     )
 
-    client = WalboxBuilder.build(options)
+    client = Walbox.build(options)
 
-    assert isinstance(client, WalboxClient)
+    assert isinstance(client, Client)
     assert isinstance(client.checkpoint_store, PostgresCheckpointStore)
     assert client.options.consumer_name == "app"
     assert client.options.dsn == "postgresql://example"
@@ -68,9 +68,9 @@ def test_build_returns_a_replication_client_wired_from_walbox_options():
 def test_build_with_pool_wires_a_checkpoint_store_backed_by_the_given_pool():
     pool = _FakePool()
 
-    client = WalboxBuilder.build_with_pool(_options(), pool)
+    client = Walbox.build_with_pool(_options(), pool)
 
-    assert isinstance(client, WalboxClient)
+    assert isinstance(client, Client)
     assert isinstance(client.checkpoint_store, PostgresCheckpointStore)
     assert client.checkpoint_store._acquire.__self__ is pool
     assert client.options.consumer_name == "app"

@@ -45,7 +45,7 @@ policy are kept apart rather than mixed into one place:
 | `walbox/checkpoint.py` | durable local replay position |
 | `walbox/client.py` | delivery lifecycle: connect, feedback, reconnect, backpressure, shutdown, metrics |
 | `walbox/abc.py` | shared value objects and Protocols (`Transaction`, `ChangeEvent`, `CheckpointStore`, `Metrics`, `WalboxOptions`) |
-| `walbox/builder.py` | constructs a `WalboxClient` from `WalboxOptions` without exposing checkpoint-store wiring |
+| `walbox/builder.py` | constructs a `Client` from `WalboxOptions` without exposing checkpoint-store wiring |
 | `walbox/errors.py` | the error hierarchy (below) |
 
 One deliberate deviation from the original brief: `protocol.py`'s scope shrank after

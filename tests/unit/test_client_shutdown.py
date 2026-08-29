@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 from walbox.abc import CheckpointHandle
 from walbox.abc import Transaction
 from walbox.abc import WalboxOptions
-from walbox.client import WalboxClient
+from walbox.client import Client
 from walbox.errors import ReplicationConnectionError
 
 
@@ -125,7 +125,7 @@ def _commit_inner(commit_lsn: int, end_lsn: int, commit_time: int = 222) -> byte
 
 async def test_receiver_notices_closing_and_exits_within_one_status_interval():
     status_interval = 0.05
-    client = WalboxClient(
+    client = Client(
         _options(status_interval=status_interval),
         _FakeCheckpointStore(),
     )
@@ -143,7 +143,7 @@ async def test_receiver_notices_closing_and_exits_within_one_status_interval():
 
 async def test_run_once_sends_a_final_status_update_after_both_loops_stop():
     transport = _FakeTransport(idle=True)
-    client = WalboxClient(_options(status_interval=0.05), _FakeCheckpointStore())
+    client = Client(_options(status_interval=0.05), _FakeCheckpointStore())
     client._new_transport = lambda: transport
 
     original_receive_loop = client._receive_loop
@@ -175,7 +175,7 @@ async def test_run_once_sends_a_final_status_update_after_both_loops_stop():
 
 async def test_run_once_ends_the_copy_stream_before_closing_the_transport():
     transport = _FakeTransport(idle=True)
-    client = WalboxClient(_options(status_interval=0.05), _FakeCheckpointStore())
+    client = Client(_options(status_interval=0.05), _FakeCheckpointStore())
     client._new_transport = lambda: transport
 
     run_task = asyncio.ensure_future(client.run(AsyncMock()))
@@ -189,7 +189,7 @@ async def test_run_once_ends_the_copy_stream_before_closing_the_transport():
 
 async def test_run_returns_normally_on_a_clean_shutdown():
     transport = _FakeTransport(idle=True)
-    client = WalboxClient(_options(status_interval=0.05), _FakeCheckpointStore())
+    client = Client(_options(status_interval=0.05), _FakeCheckpointStore())
     client._new_transport = lambda: transport
 
     run_task = asyncio.ensure_future(client.run(AsyncMock()))
@@ -208,7 +208,7 @@ async def test_in_flight_handler_completes_and_checkpoints_before_run_returns():
     transport = _FakeTransport(frames=frames, idle=True)
     checkpoint_store = _FakeCheckpointStore()
     options = _options(status_interval=0.05)
-    client = WalboxClient(options, checkpoint_store)
+    client = Client(options, checkpoint_store)
     client._new_transport = lambda: transport
 
     started = asyncio.Event()
@@ -240,7 +240,7 @@ async def test_in_flight_handler_completes_and_checkpoints_before_run_returns():
 
 
 async def test_reconnect_is_not_attempted_when_closing_during_a_connection_error():
-    client = WalboxClient(_options(), _FakeCheckpointStore())
+    client = Client(_options(), _FakeCheckpointStore())
 
     async def _fail(handler) -> None:
         # Simulates close() racing in from another task right as the

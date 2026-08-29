@@ -19,7 +19,7 @@ from walbox.abc import CheckpointHandle
 from walbox.abc import Transaction
 from walbox.abc import WalboxOptions
 from walbox.checkpoint import PostgresCheckpointStore
-from walbox.client import WalboxClient
+from walbox.client import Client
 
 pytestmark = pytest.mark.postgres
 
@@ -82,7 +82,7 @@ async def test_handler_checkpoints_explicitly_via_the_handle_it_is_given(
         slot_name=slot_name,
         publication_name="walbox_pub",
     )
-    client = WalboxClient(options, checkpoint_store=checkpoint_store)
+    client = Client(options, checkpoint_store=checkpoint_store)
     saved: list[int] = []
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:

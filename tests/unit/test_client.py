@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from unittest.mock import AsyncMock
 
 from walbox.abc import WalboxOptions
-from walbox.client import WalboxClient
+from walbox.client import Client
 from walbox.protocol import PrimaryKeepalive
 from walbox.protocol import XLogData
 from walbox.transport import ReplicationTransport
@@ -30,8 +30,8 @@ def _options() -> WalboxOptions:
     )
 
 
-def _client(checkpoint_lsn: int | None = None) -> WalboxClient:
-    return WalboxClient(_options(), _FakeCheckpointStore(checkpoint_lsn))
+def _client(checkpoint_lsn: int | None = None) -> Client:
+    return Client(_options(), _FakeCheckpointStore(checkpoint_lsn))
 
 
 def _begin_payload(final_lsn: int = 100, commit_time: int = 111, xid: int = 1) -> bytes:
@@ -65,7 +65,7 @@ def test_new_transport_uses_the_configured_dsn_slot_and_publication():
         slot_name="configured_slot",
         publication_name="configured_pub",
     )
-    client = WalboxClient(options, _FakeCheckpointStore(None))
+    client = Client(options, _FakeCheckpointStore(None))
 
     transport = client._new_transport()
 
@@ -98,7 +98,7 @@ async def test_existing_checkpoint_starts_replication_one_past_it_with_the_check
     assert client._durable_lsn == 500
 
 
-async def _run_until_start_replication(client: WalboxClient) -> None:
+async def _run_until_start_replication(client: Client) -> None:
     """Drive just `run`'s startup logic, stopping before the read loop.
 
     `client._transport` is pre-set to a mock by the caller; `run` overwrites

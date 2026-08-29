@@ -1,7 +1,7 @@
 """Integration tests for graceful shutdown against a real Postgres.
 
 Covers four named SIGTERM scenarios: `close()` is what a signal handler
-would invoke, and each scenario asserts `WalboxClient.run` returns
+would invoke, and each scenario asserts `Client.run` returns
 cleanly -- no exception, no cancellation needed -- only once any in-flight
 handler has finished and been checkpointed.
 """
@@ -18,7 +18,7 @@ from walbox.abc import CheckpointHandle
 from walbox.abc import Transaction
 from walbox.abc import WalboxOptions
 from walbox.checkpoint import PostgresCheckpointStore
-from walbox.client import WalboxClient
+from walbox.client import Client
 
 pytestmark = pytest.mark.postgres
 
@@ -83,7 +83,7 @@ async def _wait_for_count(items: list, count: int, timeout: float = 10.0) -> Non
     await asyncio.wait_for(_poll(), timeout=timeout)
 
 
-async def _cleanup(client: WalboxClient, run_task: "asyncio.Task[None]") -> None:
+async def _cleanup(client: Client, run_task: "asyncio.Task[None]") -> None:
     """Best-effort teardown, so a failed assertion never leaks a task/connection."""
     if not run_task.done():
         client.close()
@@ -101,7 +101,7 @@ async def _cleanup(client: WalboxClient, run_task: "asyncio.Task[None]") -> None
 async def test_sigterm_while_idle(postgres_dsn, outbox_table):
     slot_name = _unique_slot_name()
     consumer_name = _unique_consumer_name()
-    client = WalboxClient(
+    client = Client(
         _options(postgres_dsn, slot_name, consumer_name),
         checkpoint_store=PostgresCheckpointStore(
             postgres_dsn,
@@ -123,7 +123,7 @@ async def test_sigterm_while_idle(postgres_dsn, outbox_table):
 async def test_sigterm_while_receiving(postgres_dsn, outbox_table):
     slot_name = _unique_slot_name()
     consumer_name = _unique_consumer_name()
-    client = WalboxClient(
+    client = Client(
         _options(postgres_dsn, slot_name, consumer_name),
         checkpoint_store=PostgresCheckpointStore(
             postgres_dsn,
@@ -167,7 +167,7 @@ async def test_sigterm_while_receiving(postgres_dsn, outbox_table):
 async def test_sigterm_while_processing_a_transaction(postgres_dsn, outbox_table):
     slot_name = _unique_slot_name()
     consumer_name = _unique_consumer_name()
-    client = WalboxClient(
+    client = Client(
         _options(postgres_dsn, slot_name, consumer_name),
         checkpoint_store=PostgresCheckpointStore(
             postgres_dsn,
@@ -219,7 +219,7 @@ async def test_sigterm_while_processing_a_transaction(postgres_dsn, outbox_table
 async def test_sigterm_under_backpressure(postgres_dsn, outbox_table):
     slot_name = _unique_slot_name()
     consumer_name = _unique_consumer_name()
-    client = WalboxClient(
+    client = Client(
         _options(
             postgres_dsn,
             slot_name,
@@ -283,7 +283,7 @@ async def test_sigterm_under_backpressure(postgres_dsn, outbox_table):
     ) -> None:
         redelivered.append(_entity_id(transaction))
 
-    fresh_client = WalboxClient(
+    fresh_client = Client(
         _options(postgres_dsn, slot_name, consumer_name),
         checkpoint_store=PostgresCheckpointStore(
             postgres_dsn,

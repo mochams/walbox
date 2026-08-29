@@ -10,23 +10,23 @@ follows [Semantic Versioning](https://semver.org/) (pre-1.0 tags use the
 ### Breaking changes
 
 - **`ReplicationOptions` removed.** `WalboxOptions` is now the only options
-  type. `WalboxClient` takes it directly plus a `CheckpointStore`:
-  `WalboxClient(options, checkpoint_store)`, instead of embedding the
+  type. `Client` takes it directly plus a `CheckpointStore`:
+  `Client(options, checkpoint_store)`, instead of embedding the
   checkpoint store inside the options object.
-- **`ReplicationClient` renamed to `WalboxClient`.**
+- **`ReplicationClient` renamed to `Client`.**
 - **`FileCheckpointStore` removed.** PostgreSQL is now the only supported
   checkpoint backend for the public API.
-- **New `WalboxBuilder`** is the recommended way to construct a client:
-  `WalboxBuilder.build(options)` or `WalboxBuilder.build_with_pool(options,
+- **New `Walbox`** is the recommended way to construct a client:
+  `Walbox.build(options)` or `Walbox.build_with_pool(options,
   pool)`, replacing manual construction of `PostgresCheckpointStore` +
   `ReplicationOptions` + `ReplicationClient`.
-- **`WalboxBuilder.build_with_pool()` takes your own connection pool**
+- **`Walbox.build_with_pool()` takes your own connection pool**
   (`build_with_pool(options, pool)`) instead of building one from a
   `PoolOptions` config object (`PoolOptions` removed). You open and close
   the pool; walbox only uses it.
 - **Top-level `walbox` export surface changed.** Removed: `CheckpointStore`,
   `PostgresCheckpointStore`, `ReplicationOptions`, `FileCheckpointStore`,
-  `PoolOptions`. Added: `WalboxOptions`, `WalboxBuilder`, `ConnectionPool`.
+  `PoolOptions`. Added: `WalboxOptions`, `Walbox`, `ConnectionPool`.
   Advanced/manual construction remains available via `walbox.abc` and
   `walbox.checkpoint`.
 - **Example scripts consolidated and renamed**, all now built on
@@ -57,6 +57,14 @@ follows [Semantic Versioning](https://semver.org/) (pre-1.0 tags use the
 - Full documentation site (mkdocs): getting started, production deployment,
   delivery guarantees, monitoring, and per-integration example guides (NATS,
   RabbitMQ, Temporal, webhooks, PostgreSQL, transactional outbox).
+- Integration coverage for a genuine, uncatchable process kill: `Client` is
+  run as a real OS subprocess, sent `SIGKILL`, and a second, independently
+  cold-started process is verified to resume correctly from the durable
+  checkpoint — redelivering only what was never durably checkpointed, never
+  re-delivering what was, and never losing anything in between. Previously
+  the reconnect/shutdown tests only covered a dropped connection within the
+  same process (`pg_terminate_backend`) or a cooperative `close()`, neither
+  of which proves anything about an actual crash.
 
 ### Removed
 
@@ -65,7 +73,7 @@ follows [Semantic Versioning](https://semver.org/) (pre-1.0 tags use the
 
 ### Notes
 
-- `WalboxBuilder.build()` remains available for low checkpoint volume or
+- `Walbox.build()` remains available for low checkpoint volume or
   when avoiding the `psycopg-pool` dependency matters; `build_with_pool()`
   is the recommended default otherwise, since `build()` opens and closes a
   new connection on every `checkpoint.save()` call.

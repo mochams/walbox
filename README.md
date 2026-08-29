@@ -55,7 +55,7 @@ from walbox import (
     ChangeKind,
     CheckpointHandle,
     Transaction,
-    WalboxBuilder,
+    Walbox,
     WalboxOptions,
 )
 
@@ -74,7 +74,7 @@ async def main():
         slot_name="slot",
         publication_name="walbox_pub",
     )
-    client = WalboxBuilder.build(options)
+    client = Walbox.build(options)
     await client.run(handle)
 
 

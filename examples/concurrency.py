@@ -40,7 +40,7 @@ from psycopg_pool import AsyncConnectionPool
 from walbox import ChangeKind
 from walbox import CheckpointHandle
 from walbox import Transaction
-from walbox import WalboxBuilder
+from walbox import Walbox
 from walbox import WalboxOptions
 
 logger = logging.getLogger("walbox.examples.concurrency")
@@ -182,7 +182,7 @@ async def main() -> None:
     # min_size/max_size are usage-dependent; these are just reasonable
     # example defaults, not a recommendation for any particular workload.
     async with AsyncConnectionPool(dsn, min_size=1, max_size=5) as pool:
-        client = WalboxBuilder.build_with_pool(options, pool)
+        client = Walbox.build_with_pool(options, pool)
 
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):

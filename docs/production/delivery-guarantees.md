@@ -116,13 +116,13 @@ Retries and backoff are your application's job, not walbox's.
 
 ## Checkpoint stores
 
-PostgreSQL is the only supported checkpoint backend. `WalboxBuilder` constructs a `PostgresCheckpointStore` for you; the common path never needs to name it directly.
+PostgreSQL is the only supported checkpoint backend. `Walbox` constructs a `PostgresCheckpointStore` for you; the common path never needs to name it directly.
 
 ### PostgresCheckpointStore
 
 Stores the checkpoint as a row in your PostgreSQL database. It creates a `walbox_checkpoint` table automatically and loads the latest row for your consumer name on startup.
 
-**Without a connection** (`checkpoint.save(lsn)`, what `WalboxBuilder.build()`/`build_with_pool()` give you): walbox opens its own connection (or one from the pool), upserts the row, and commits immediately. The checkpoint is durable once that commit completes. This is also what covers the external-sink case (a broker, an HTTP endpoint) where you can't share a transaction with the checkpoint: the checkpoint and your side effect aren't committed atomically, so if walbox crashes after the side effect succeeds but before the checkpoint is durable, the transaction is delivered again on restart. Your sink needs to tolerate that through idempotency or deduplication.
+**Without a connection** (`checkpoint.save(lsn)`, what `Walbox.build()`/`build_with_pool()` give you): walbox opens its own connection (or one from the pool), upserts the row, and commits immediately. The checkpoint is durable once that commit completes. This is also what covers the external-sink case (a broker, an HTTP endpoint) where you can't share a transaction with the checkpoint: the checkpoint and your side effect aren't committed atomically, so if walbox crashes after the side effect succeeds but before the checkpoint is durable, the transaction is delivered again on restart. Your sink needs to tolerate that through idempotency or deduplication.
 
 **With a caller's connection** (`checkpoint.save(lsn, connection=conn)`): walbox upserts on your connection and does not commit; you do. The checkpoint then participates in your transaction and is durable only when your transaction commits. This is what makes the same-transaction pattern below work.
 
@@ -166,7 +166,7 @@ This requires:
 - Both go through the **same transaction** (same connection, single commit)
 - The checkpoint is written with `checkpoint.save(lsn, connection=conn)`
 
-For a fuller version of this pattern, including a pooled connection via `WalboxBuilder.build_with_pool()`, see [the PostgreSQL example](../examples/postgresql.md).
+For a fuller version of this pattern, including a pooled connection via `Walbox.build_with_pool()`, see [the PostgreSQL example](../examples/postgresql.md).
 
 ## Recovery on restart
 

@@ -80,7 +80,7 @@ original design brief:
   code alone.
 - **Type everything**, especially protocol boundaries.
 - **Avoid giant "manager"/"handler"/"processor" classes.** `client.py`'s
-  `WalboxClient` is the closest thing to one and is kept to delivery-lifecycle
+  `Client` is the closest thing to one and is kept to delivery-lifecycle
   orchestration only: decoding, assembly, and checkpointing all live in their own
   modules.
 - **Don't bury error handling in generic `except Exception` blocks.** The one

@@ -1,4 +1,4 @@
-"""Integration tests for `WalboxClient.run` against a real Postgres.
+"""Integration tests for `Client.run` against a real Postgres.
 
 Exercises the guide's own "smallest vertical slice": connect, decode the
 byte stream, assemble transactions, and dispatch them to a handler --
@@ -20,7 +20,7 @@ from walbox.abc import ChangeKind
 from walbox.abc import CheckpointHandle
 from walbox.abc import Transaction
 from walbox.abc import WalboxOptions
-from walbox.client import WalboxClient
+from walbox.client import Client
 
 pytestmark = pytest.mark.postgres
 
@@ -65,8 +65,8 @@ def _options(postgres_dsn: str, slot_name: str) -> WalboxOptions:
     )
 
 
-def _client(postgres_dsn: str, slot_name: str) -> WalboxClient:
-    return WalboxClient(_options(postgres_dsn, slot_name), _FakeCheckpointStore())
+def _client(postgres_dsn: str, slot_name: str) -> Client:
+    return Client(_options(postgres_dsn, slot_name), _FakeCheckpointStore())
 
 
 async def _wait_for_count(
@@ -101,9 +101,9 @@ async def _wait_slot_active(
 
 
 class _RunningClient:
-    """Runs a `WalboxClient` as a background task for one test's lifetime."""
+    """Runs a `Client` as a background task for one test's lifetime."""
 
-    def __init__(self, client: WalboxClient, handler: _RecordingHandler) -> None:
+    def __init__(self, client: Client, handler: _RecordingHandler) -> None:
         self._client = client
         self._task = asyncio.ensure_future(client.run(handler))
 
