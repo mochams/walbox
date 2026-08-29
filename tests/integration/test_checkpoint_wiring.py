@@ -1,6 +1,6 @@
 """Integration test for checkpoint-handle wiring against a real client run.
 
-Exercises `FileCheckpointStore`: the application, not the client, is
+Exercises `PostgresCheckpointStore`: the application, not the client, is
 responsible for calling `checkpoint.save(...)`, exactly as the project's
 README example shows -- walbox has no auto-checkpoint mode.
 """
@@ -10,17 +10,16 @@ import contextlib
 import uuid
 from dataclasses import dataclass
 from dataclasses import field
-from pathlib import Path
 from typing import Any
 
 import pytest
 from psycopg import AsyncConnection
 
 from walbox.abc import CheckpointHandle
-from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
-from walbox.checkpoint import FileCheckpointStore
-from walbox.client import ReplicationClient
+from walbox.abc import WalboxOptions
+from walbox.checkpoint import PostgresCheckpointStore
+from walbox.client import WalboxClient
 
 pytestmark = pytest.mark.postgres
 
@@ -29,18 +28,25 @@ def _unique_slot_name() -> str:
     return f"slot_{uuid.uuid4().hex}"
 
 
+def _unique_consumer_name() -> str:
+    return f"consumer_{uuid.uuid4().hex}"
+
+
 @dataclass
 class _CountingCheckpointStore:
-    """Wraps a real `FileCheckpointStore`, counting `save` calls."""
+    """Wraps a real `PostgresCheckpointStore`, counting `save` calls."""
 
-    inner: FileCheckpointStore
+    inner: PostgresCheckpointStore
     save_count: int = field(default=0)
 
     async def load(self) -> int | None:
         return await self.inner.load()
 
     async def save(
-        self, lsn: int, *, connection: AsyncConnection[Any] | None = None
+        self,
+        lsn: int,
+        *,
+        connection: AsyncConnection[Any] | None = None,
     ) -> None:
         self.save_count += 1
         await self.inner.save(lsn, connection=connection)
@@ -64,20 +70,19 @@ async def _wait_slot_active(dsn: str, slot_name: str, attempts: int = 100) -> No
 async def test_handler_checkpoints_explicitly_via_the_handle_it_is_given(
     postgres_dsn: str,
     outbox_table: None,
-    tmp_path: Path,
 ) -> None:
+    consumer_name = _unique_consumer_name()
     checkpoint_store = _CountingCheckpointStore(
-        FileCheckpointStore(tmp_path / "checkpoint")
+        PostgresCheckpointStore(postgres_dsn, consumer_name=consumer_name),
     )
     slot_name = _unique_slot_name()
-    options = ReplicationOptions(
-        consumer_name="test-consumer",
+    options = WalboxOptions(
+        consumer_name=consumer_name,
         dsn=postgres_dsn,
         slot_name=slot_name,
         publication_name="walbox_pub",
-        checkpoint_store=checkpoint_store,
     )
-    client = ReplicationClient(options)
+    client = WalboxClient(options, checkpoint_store=checkpoint_store)
     saved: list[int] = []
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:

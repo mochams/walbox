@@ -10,11 +10,14 @@ from dataclasses import dataclass
 from dataclasses import field
 from unittest.mock import AsyncMock
 
+import pytest
+
 from walbox.abc import CheckpointHandle
-from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
+from walbox.abc import WalboxOptions
 from walbox.client import Handler
-from walbox.client import ReplicationClient
+from walbox.client import WalboxClient
+from walbox.errors import CheckpointError
 from walbox.protocol import XLogData
 
 
@@ -31,13 +34,12 @@ class _RecordingCheckpointStore:
         self.order.append(f"save:{lsn}")
 
 
-def _options(*, checkpoint_store: _RecordingCheckpointStore) -> ReplicationOptions:
-    return ReplicationOptions(
+def _options() -> WalboxOptions:
+    return WalboxOptions(
         consumer_name="test-consumer",
         dsn="postgresql://example",
         slot_name="test_slot",
         publication_name="test_pub",
-        checkpoint_store=checkpoint_store,
     )
 
 
@@ -65,7 +67,7 @@ def _commit_payload(
     )
 
 
-async def _feed_one_transaction(client: ReplicationClient, handler: Handler) -> None:
+async def _feed_one_transaction(client: WalboxClient, handler: Handler) -> None:
     """Assemble a synthetic Begin/Commit sequence and process the result.
 
     `_handle_xlog_data` only decodes and enqueues; the checkpoint/handler
@@ -76,7 +78,10 @@ async def _feed_one_transaction(client: ReplicationClient, handler: Handler) -> 
     begin_xlog = XLogData(wal_start=1, wal_end=1, send_time=0, payload=_begin_payload())
     await client._handle_xlog_data(begin_xlog)
     commit_xlog = XLogData(
-        wal_start=2, wal_end=2, send_time=0, payload=_commit_payload()
+        wal_start=2,
+        wal_end=2,
+        send_time=0,
+        payload=_commit_payload(),
     )
     await client._handle_xlog_data(commit_xlog)
     transaction = client._queue.get_nowait()
@@ -85,7 +90,7 @@ async def _feed_one_transaction(client: ReplicationClient, handler: Handler) -> 
 
 async def test_handler_receives_a_checkpoint_handle_as_its_second_argument():
     store = _RecordingCheckpointStore()
-    client = ReplicationClient(_options(checkpoint_store=store))
+    client = WalboxClient(_options(), store)
     seen: list[tuple[Transaction, CheckpointHandle]] = []
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
@@ -106,7 +111,7 @@ async def test_client_never_calls_save_automatically():
     many transactions are processed.
     """
     store = _RecordingCheckpointStore()
-    client = ReplicationClient(_options(checkpoint_store=store))
+    client = WalboxClient(_options(), store)
     handler = AsyncMock()
 
     await _feed_one_transaction(client, handler)
@@ -116,7 +121,7 @@ async def test_client_never_calls_save_automatically():
 
 async def test_handler_calling_checkpoint_save_is_what_persists_progress():
     store = _RecordingCheckpointStore()
-    client = ReplicationClient(_options(checkpoint_store=store))
+    client = WalboxClient(_options(), store)
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         await checkpoint.save(transaction.commit_lsn)
@@ -125,3 +130,20 @@ async def test_handler_calling_checkpoint_save_is_what_persists_progress():
 
     # commit_lsn is derived from end_lsn - 1 (see TransactionAssembler): 150 - 1 == 149
     assert store.order == ["save:149"]
+
+
+async def test_process_rejects_a_handler_save_above_the_dispatched_transaction():
+    """`_process` binds each `CheckpointHandle` to that transaction's real
+    `commit_lsn` (149, see above), so a handler saving beyond it is rejected
+    before it ever reaches the store.
+    """
+    store = _RecordingCheckpointStore()
+    client = WalboxClient(_options(), store)
+
+    async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
+        await checkpoint.save(150)
+
+    with pytest.raises(CheckpointError):
+        await _feed_one_transaction(client, handler)
+
+    assert store.order == []

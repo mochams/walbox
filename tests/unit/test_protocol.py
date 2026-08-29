@@ -15,7 +15,10 @@ from walbox.protocol import pg_now_micros
 
 
 def _xlog_data_bytes(
-    wal_start: int, wal_end: int, send_time: int, payload: bytes
+    wal_start: int,
+    wal_end: int,
+    send_time: int,
+    payload: bytes,
 ) -> bytes:
     return (
         b"w"
@@ -37,11 +40,17 @@ def _keepalive_bytes(wal_end: int, send_time: int, reply_requested: bool) -> byt
 
 def test_decode_xlog_data_parses_all_three_lsn_like_fields_and_payload():
     raw = _xlog_data_bytes(
-        wal_start=111, wal_end=222, send_time=333, payload=b"pgoutput-bytes"
+        wal_start=111,
+        wal_end=222,
+        send_time=333,
+        payload=b"pgoutput-bytes",
     )
     decoded = decode_xlog_data(raw)
     assert decoded == XLogData(
-        wal_start=111, wal_end=222, send_time=333, payload=b"pgoutput-bytes"
+        wal_start=111,
+        wal_end=222,
+        send_time=333,
+        payload=b"pgoutput-bytes",
     )
 
 
@@ -57,7 +66,9 @@ def test_decode_primary_keepalive_parses_reply_requested_true_and_false(
     raw = _keepalive_bytes(wal_end=42, send_time=99, reply_requested=reply_requested)
     decoded = decode_primary_keepalive(raw)
     assert decoded == PrimaryKeepalive(
-        wal_end=42, send_time=99, reply_requested=reply_requested
+        wal_end=42,
+        send_time=99,
+        reply_requested=reply_requested,
     )
 
 

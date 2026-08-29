@@ -2,14 +2,12 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from walbox.errors import (
-    CheckpointError,
-    DecodeError,
-    ErrorContext,
-    ProtocolError,
-    ReplicationConnectionError,
-    WalboxError,
-)
+from walbox.errors import CheckpointError
+from walbox.errors import DecodeError
+from walbox.errors import ErrorContext
+from walbox.errors import ProtocolError
+from walbox.errors import ReplicationConnectionError
+from walbox.errors import WalboxError
 
 
 def test_context_defaults_to_all_none():

@@ -75,7 +75,7 @@ class TransactionAssembler:
     def feed(self, message: PgoutputMessage) -> Transaction | None:
         """Consume one decoded pgoutput message, in wire order.
 
-        `client.py` filters out `Type`/`Origin` before calling this.
+        `client.py` filters out `Type`/`Origin`/`Message` before calling this.
 
         Returns:
             The assembled `Transaction` when a `Commit` or `StreamCommit`
@@ -101,8 +101,8 @@ class TransactionAssembler:
                 pass  # schema-only; already applied by pgoutput.Decoder
             case StreamStart() | StreamStop() | StreamCommit() | StreamAbort():
                 return self._feed_stream_message(message)
-            case _:  # pragma: no cover, Type/Origin are filtered out by
-                # client.py before reaching feed(); anything else is a bug.
+            case _:  # pragma: no cover, Type/Origin/Message are filtered out
+                # by client.py before reaching feed(); anything else is a bug.
                 unreachable = f"unhandled pgoutput message type {message!r}"
                 raise AssertionError(unreachable)
         return None
@@ -383,8 +383,9 @@ class TransactionAssembler:
             # report having durably processed less than it actually has,
             # causing PostgreSQL to resend this transaction on every
             # reconnect. This matches PostgreSQL's own logical replication
-            # apply worker (src/backend/replication/logical/worker.c), which
-            # uses end_lsn, never commit_lsn, for this purpose.
+            # apply worker (src/backend/replication/logical/worker.c,
+            # apply_handle_commit_internal's store_flush_position call),
+            # which uses end_lsn, never commit_lsn, for this purpose.
             commit_lsn=commit.end_lsn - 1,
             commit_time=commit.commit_time,
             changes=list(changes),  # defensive copy: outlives this assembler's state

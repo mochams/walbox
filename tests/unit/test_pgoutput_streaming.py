@@ -14,6 +14,7 @@ from walbox.pgoutput import Column
 from walbox.pgoutput import Decoder
 from walbox.pgoutput import Delete
 from walbox.pgoutput import Insert
+from walbox.pgoutput import Message
 from walbox.pgoutput import Relation
 from walbox.pgoutput import RelationCache
 from walbox.pgoutput import StreamAbort
@@ -25,6 +26,7 @@ from walbox.pgoutput import Type
 from walbox.pgoutput import Update
 from walbox.pgoutput import decode_delete
 from walbox.pgoutput import decode_insert
+from walbox.pgoutput import decode_message
 from walbox.pgoutput import decode_relation
 from walbox.pgoutput import decode_stream_abort
 from walbox.pgoutput import decode_stream_commit
@@ -148,6 +150,24 @@ def _type_bytes(
     if xid is not None:
         body += xid.to_bytes(4, "big")
     return body + type_oid.to_bytes(4, "big") + _cstring(namespace) + _cstring(name)
+
+
+def _message_bytes(
+    *,
+    transactional: bool,
+    lsn: int,
+    prefix: str,
+    content: bytes,
+    xid: int | None = None,
+) -> bytes:
+    body = b"M"
+    if xid is not None:
+        body += xid.to_bytes(4, "big")
+    body += bytes([1 if transactional else 0])
+    body += lsn.to_bytes(8, "big")
+    body += _cstring(prefix)
+    body += len(content).to_bytes(4, "big")
+    return body + content
 
 
 def _stream_start_bytes(xid: int, *, first_segment: bool) -> bytes:
@@ -354,6 +374,25 @@ def test_decode_type_skips_leading_xid_when_streaming():
     assert decoded == Type(type_oid=16400, namespace="public", name="my_enum")
 
 
+def test_decode_message_skips_leading_xid_when_streaming():
+    decoded = decode_message(
+        _message_bytes(
+            transactional=True,
+            lsn=555,
+            prefix="my-app",
+            content=b"hello",
+            xid=123,
+        ),
+        streaming=True,
+    )
+    assert decoded == Message(
+        transactional=True,
+        lsn=555,
+        prefix="my-app",
+        content=b"hello",
+    )
+
+
 # -- Decoder bracket tracking --------------------------------------------
 
 
@@ -408,6 +447,21 @@ def test_decoder_handles_type_message_inside_open_streaming_bracket():
 
     decoded_type = decoder.decode(_type_bytes(16400, "public", "my_enum", xid=42))
     assert isinstance(decoded_type, Type)
+
+    insert = decoder.decode(_insert_bytes(7, xid=42))
+    assert isinstance(insert, Insert)
+    assert insert.new == {"id": "5"}
+
+
+def test_decoder_handles_message_inside_open_streaming_bracket():
+    decoder = Decoder()
+    decoder.decode(_relation_bytes(7, "public", "widgets"))
+    decoder.decode(_stream_start_bytes(42, first_segment=True))
+
+    decoded_message = decoder.decode(
+        _message_bytes(transactional=False, lsn=1, prefix="p", content=b"c", xid=42),
+    )
+    assert isinstance(decoded_message, Message)
 
     insert = decoder.decode(_insert_bytes(7, xid=42))
     assert isinstance(insert, Insert)

@@ -9,13 +9,14 @@ _EXPECTED_ALL = {
     "ChangeEvent",
     "ChangeKind",
     "CheckpointHandle",
-    "CheckpointStore",
-    "FileCheckpointStore",
-    "PostgresCheckpointStore",
-    "ReplicationClient",
-    "ReplicationOptions",
+    "ConnectionPool",
+    "Metrics",
+    "MetricsCallback",
+    "WalboxClient",
     "Transaction",
+    "WalboxBuilder",
     "WalboxError",
+    "WalboxOptions",
 }
 
 

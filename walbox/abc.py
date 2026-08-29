@@ -10,6 +10,8 @@ from typing import Protocol
 
 from psycopg import AsyncConnection
 
+from walbox.errors import CheckpointError
+
 
 class ChangeKind(StrEnum):
     """The kind of row-level change a `ChangeEvent` carries."""
@@ -57,6 +59,7 @@ class CheckpointHandle:
 
     _store: CheckpointStore
     _on_saved: Callable[[int, float], None] | None = None
+    _max_lsn: int | None = None
 
     async def save(
         self,
@@ -68,7 +71,19 @@ class CheckpointHandle:
 
         `connection`, if given, is an already-open Postgres connection or
         transaction the underlying store can join instead of opening its own.
+
+        Raises:
+            CheckpointError: If `lsn` is greater than the commit LSN of the
+                transaction this handle was constructed for. Saving a
+                checkpoint ahead of what was actually processed risks
+                PostgreSQL recycling WAL for data walbox never handled.
         """
+        if self._max_lsn is not None and lsn > self._max_lsn:
+            message = (
+                f"refusing to save checkpoint lsn={lsn}: greater than "
+                f"the dispatched transaction's commit_lsn={self._max_lsn}"
+            )
+            raise CheckpointError(message)
         started_at = time.monotonic()
         await self._store.save(lsn, connection=connection)
         if self._on_saved is not None:
@@ -89,11 +104,12 @@ class Transaction:
 class Metrics:
     """A point-in-time snapshot of replication counters and gauges.
 
-    Handed to `ReplicationOptions.on_metrics` on the same timer as status
+    Handed to `WalboxOptions.on_metrics` on the same timer as status
     updates. No historical aggregation (rolling windows, percentiles,
     rates) is done here; that's on the application if it wants one.
     """
 
+    consumer_name: str
     receive_lsn: int
     checkpoint_lsn: int
     replication_lag_bytes: int
@@ -111,16 +127,40 @@ MetricsCallback = Callable[[Metrics], None]
 
 
 @dataclass
-class ReplicationOptions:
-    """Options for replication."""
+class WalboxOptions:
+    """Configuration for a walbox client, shared by every checkpoint backend.
+
+    `WalboxClient` takes this plus a `CheckpointStore` directly;
+    `WalboxBuilder` constructs the checkpoint store for you.
+    """
 
     consumer_name: str
-
     dsn: str
     slot_name: str
     publication_name: str
-    checkpoint_store: CheckpointStore
 
     max_pending_transactions: int = 100
     status_interval: int = 10
     on_metrics: MetricsCallback | None = None
+
+    def __post_init__(self) -> None:
+        """Validate required fields, raising `ValueError` if any are invalid.
+
+        Raises:
+            ValueError: If any required field is missing or invalid.
+        """
+        for name, value in (
+            ("consumer_name", self.consumer_name),
+            ("dsn", self.dsn),
+            ("slot_name", self.slot_name),
+            ("publication_name", self.publication_name),
+        ):
+            if not value or not value.strip():
+                message = f"{name} must not be blank"
+                raise ValueError(message)
+        if self.max_pending_transactions <= 0:
+            message = "max_pending_transactions must be > 0"
+            raise ValueError(message)
+        if self.status_interval <= 0:
+            message = "status_interval must be > 0"
+            raise ValueError(message)

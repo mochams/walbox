@@ -11,17 +11,16 @@ import asyncio
 import contextlib
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 from psycopg import AsyncConnection
 
 from walbox.abc import CheckpointHandle
-from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
-from walbox.checkpoint import FileCheckpointStore
-from walbox.client import ReplicationClient
+from walbox.abc import WalboxOptions
+from walbox.checkpoint import PostgresCheckpointStore
+from walbox.client import WalboxClient
 
 pytestmark = pytest.mark.postgres
 
@@ -30,6 +29,10 @@ _STATUS_INTERVAL = 1
 
 def _unique_slot_name() -> str:
     return f"slot_{uuid.uuid4().hex}"
+
+
+def _unique_consumer_name() -> str:
+    return f"consumer_{uuid.uuid4().hex}"
 
 
 @dataclass
@@ -63,9 +66,9 @@ def _decode_flushed_lsn(payload: bytes) -> int:
 
 
 class _RunningClient:
-    """Runs a `ReplicationClient` as a background task for one test's lifetime."""
+    """Runs a `WalboxClient` as a background task for one test's lifetime."""
 
-    def __init__(self, client: ReplicationClient, handler) -> None:
+    def __init__(self, client: WalboxClient, handler) -> None:
         self._client = client
         self._task = asyncio.ensure_future(client.run(handler))
 
@@ -85,18 +88,18 @@ class _RunningClient:
 
 @pytest.mark.timeout(30)
 async def test_periodic_status_update_is_sent_without_any_transaction_activity(
-    postgres_dsn, outbox_table
+    postgres_dsn,
+    outbox_table,
 ):
     slot_name = _unique_slot_name()
-    options = ReplicationOptions(
+    options = WalboxOptions(
         consumer_name="test-consumer",
         dsn=postgres_dsn,
         slot_name=slot_name,
         publication_name="walbox_pub",
-        checkpoint_store=_NoOpCheckpointStore(),
         status_interval=_STATUS_INTERVAL,
     )
-    client = ReplicationClient(options)
+    client = WalboxClient(options, checkpoint_store=_NoOpCheckpointStore())
 
     write_calls: list[bytes] = []
     original_new_transport = client._new_transport
@@ -125,19 +128,23 @@ async def test_periodic_status_update_is_sent_without_any_transaction_activity(
 
 @pytest.mark.timeout(30)
 async def test_feedback_reflects_the_checkpoint_after_a_manual_save(
-    postgres_dsn, outbox_table, tmp_path: Path
+    postgres_dsn,
+    outbox_table,
 ):
-    checkpoint_store = FileCheckpointStore(tmp_path / "checkpoint")
+    consumer_name = _unique_consumer_name()
+    checkpoint_store = PostgresCheckpointStore(
+        postgres_dsn,
+        consumer_name=consumer_name,
+    )
     slot_name = _unique_slot_name()
-    options = ReplicationOptions(
-        consumer_name="test-consumer",
+    options = WalboxOptions(
+        consumer_name=consumer_name,
         dsn=postgres_dsn,
         slot_name=slot_name,
         publication_name="walbox_pub",
-        checkpoint_store=checkpoint_store,
         status_interval=_STATUS_INTERVAL,
     )
-    client = ReplicationClient(options)
+    client = WalboxClient(options, checkpoint_store=checkpoint_store)
     saved: list[int] = []
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
@@ -186,19 +193,23 @@ async def test_feedback_reflects_the_checkpoint_after_a_manual_save(
 
 @pytest.mark.timeout(30)
 async def test_feedback_stays_at_the_floor_when_the_handler_never_saves(
-    postgres_dsn, outbox_table, tmp_path: Path
+    postgres_dsn,
+    outbox_table,
 ):
-    checkpoint_store = FileCheckpointStore(tmp_path / "checkpoint")
+    consumer_name = _unique_consumer_name()
+    checkpoint_store = PostgresCheckpointStore(
+        postgres_dsn,
+        consumer_name=consumer_name,
+    )
     slot_name = _unique_slot_name()
-    options = ReplicationOptions(
-        consumer_name="test-consumer",
+    options = WalboxOptions(
+        consumer_name=consumer_name,
         dsn=postgres_dsn,
         slot_name=slot_name,
         publication_name="walbox_pub",
-        checkpoint_store=checkpoint_store,
         status_interval=_STATUS_INTERVAL,
     )
-    client = ReplicationClient(options)
+    client = WalboxClient(options, checkpoint_store=checkpoint_store)
     seen: list[Transaction] = []
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:

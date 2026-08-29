@@ -25,3 +25,6 @@ lab/
 
 # Docs
 site/
+
+# OS files
+.DS_Store

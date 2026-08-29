@@ -4,11 +4,13 @@ from walbox.errors import DecodeError
 from walbox.pgoutput import Column
 from walbox.pgoutput import Decoder
 from walbox.pgoutput import Insert
+from walbox.pgoutput import Message
 from walbox.pgoutput import Origin
 from walbox.pgoutput import Relation
 from walbox.pgoutput import RelationCache
 from walbox.pgoutput import Truncate
 from walbox.pgoutput import Type
+from walbox.pgoutput import decode_message
 from walbox.pgoutput import decode_origin
 from walbox.pgoutput import decode_truncate
 from walbox.pgoutput import decode_type
@@ -75,6 +77,23 @@ def _origin_bytes(origin_lsn: int, name: str) -> bytes:
     return b"O" + origin_lsn.to_bytes(8, "big") + _cstring(name)
 
 
+def _message_bytes(
+    *,
+    transactional: bool,
+    lsn: int,
+    prefix: str,
+    content: bytes,
+) -> bytes:
+    return (
+        b"M"
+        + bytes([1 if transactional else 0])
+        + lsn.to_bytes(8, "big")
+        + _cstring(prefix)
+        + len(content).to_bytes(4, "big")
+        + content
+    )
+
+
 def test_decode_truncate_single_relation_no_flags():
     relations = RelationCache()
     relations.add(_things_relation(1))
@@ -132,6 +151,28 @@ def test_decode_origin_rejects_wrong_leading_byte():
         decode_origin(b"X" + b"\x00" * 10)
 
 
+def test_decode_message_message():
+    decoded = decode_message(
+        _message_bytes(
+            transactional=True,
+            lsn=555,
+            prefix="my-app",
+            content=b"hello",
+        ),
+    )
+    assert decoded == Message(
+        transactional=True,
+        lsn=555,
+        prefix="my-app",
+        content=b"hello",
+    )
+
+
+def test_decode_message_rejects_wrong_leading_byte():
+    with pytest.raises(DecodeError):
+        decode_message(b"X" + b"\x00" * 10)
+
+
 def test_decode_message_dispatches_truncate():
     decoder = Decoder()
     decoder.decode(_relation_bytes(7, "public", "widgets"))
@@ -160,6 +201,21 @@ def test_decode_origin_message_does_not_desync_stream():
 
     decoded_origin = decoder.decode(_origin_bytes(999, "my_origin"))
     assert isinstance(decoded_origin, Origin)
+
+    insert = decoder.decode(_insert_bytes(7))
+    assert isinstance(insert, Insert)
+    assert insert.table == "public.widgets"
+    assert insert.new == {"id": "5"}
+
+
+def test_decode_message_message_does_not_desync_stream():
+    decoder = Decoder()
+    decoder.decode(_relation_bytes(7, "public", "widgets"))
+
+    decoded_message = decoder.decode(
+        _message_bytes(transactional=False, lsn=1, prefix="p", content=b"c"),
+    )
+    assert isinstance(decoded_message, Message)
 
     insert = decoder.decode(_insert_bytes(7))
     assert isinstance(insert, Insert)

@@ -239,12 +239,11 @@ def test_decoder_returns_the_relation_object_itself():
 
 
 def test_decoder_unsupported_message_type_raises_decode_error():
-    # 'M' (Message, pg_logical_emit_message()) is a real pgoutput message
-    # kind that walbox deliberately never decodes -- unlike 'T'/'Y'/'O',
-    # which are now supported.
+    # 'X' isn't a real pgoutput message kind at all, unlike every other
+    # single-letter tag walbox now decodes ('T'/'Y'/'O'/'M' included).
     decoder = Decoder()
     with pytest.raises(DecodeError):
-        decoder.decode(b"M" + b"\x00" * 10)
+        decoder.decode(b"X" + b"\x00" * 10)
 
 
 def test_decoder_dispatches_begin_messages():

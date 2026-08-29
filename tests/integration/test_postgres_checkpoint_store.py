@@ -39,7 +39,8 @@ def table() -> str:
 
 
 async def test_load_returns_none_before_first_save(
-    postgres_dsn: str, table: str
+    postgres_dsn: str,
+    table: str,
 ) -> None:
     store = PostgresCheckpointStore(
         postgres_dsn,
@@ -56,13 +57,17 @@ async def test_save_without_connection_is_durable_and_loadable(
 ) -> None:
     consumer_name = _unique_consumer_name()
     store = PostgresCheckpointStore(
-        postgres_dsn, consumer_name=consumer_name, table=table
+        postgres_dsn,
+        consumer_name=consumer_name,
+        table=table,
     )
 
     await store.save(100)
 
     fresh_store = PostgresCheckpointStore(
-        postgres_dsn, consumer_name=consumer_name, table=table
+        postgres_dsn,
+        consumer_name=consumer_name,
+        table=table,
     )
     assert await fresh_store.load() == 100
 
@@ -74,7 +79,9 @@ async def test_save_with_connection_commits_atomically_with_caller_transaction(
 ) -> None:
     consumer_name = _unique_consumer_name()
     store = PostgresCheckpointStore(
-        postgres_dsn, consumer_name=consumer_name, table=table
+        postgres_dsn,
+        consumer_name=consumer_name,
+        table=table,
     )
 
     async with await AsyncConnection.connect(postgres_dsn) as conn:
@@ -103,7 +110,9 @@ async def test_save_with_connection_creates_the_table_on_first_use(
     """
     consumer_name = _unique_consumer_name()
     store = PostgresCheckpointStore(
-        postgres_dsn, consumer_name=consumer_name, table=table
+        postgres_dsn,
+        consumer_name=consumer_name,
+        table=table,
     )
 
     async with await AsyncConnection.connect(postgres_dsn) as conn:
@@ -120,7 +129,9 @@ async def test_save_with_connection_rolls_back_with_caller_transaction(
 ) -> None:
     consumer_name = _unique_consumer_name()
     store = PostgresCheckpointStore(
-        postgres_dsn, consumer_name=consumer_name, table=table
+        postgres_dsn,
+        consumer_name=consumer_name,
+        table=table,
     )
     await store.load()
 
@@ -143,7 +154,9 @@ async def test_save_with_connection_does_not_commit_itself(
 ) -> None:
     consumer_name = _unique_consumer_name()
     store = PostgresCheckpointStore(
-        postgres_dsn, consumer_name=consumer_name, table=table
+        postgres_dsn,
+        consumer_name=consumer_name,
+        table=table,
     )
     await store.load()
 
@@ -171,10 +184,14 @@ async def test_distinct_consumer_names_do_not_clobber_each_other(
     table: str,
 ) -> None:
     store_a = PostgresCheckpointStore(
-        postgres_dsn, consumer_name="consumer-a", table=table
+        postgres_dsn,
+        consumer_name="consumer-a",
+        table=table,
     )
     store_b = PostgresCheckpointStore(
-        postgres_dsn, consumer_name="consumer-b", table=table
+        postgres_dsn,
+        consumer_name="consumer-b",
+        table=table,
     )
 
     await store_a.save(100)
@@ -187,7 +204,9 @@ async def test_distinct_consumer_names_do_not_clobber_each_other(
 async def test_repeated_save_upserts_same_row(postgres_dsn: str, table: str) -> None:
     consumer_name = _unique_consumer_name()
     store = PostgresCheckpointStore(
-        postgres_dsn, consumer_name=consumer_name, table=table
+        postgres_dsn,
+        consumer_name=consumer_name,
+        table=table,
     )
 
     await store.save(100)
@@ -205,7 +224,8 @@ async def test_repeated_save_upserts_same_row(postgres_dsn: str, table: str) -> 
 
 
 async def test_schema_created_lazily_on_first_load(
-    postgres_dsn: str, table: str
+    postgres_dsn: str,
+    table: str,
 ) -> None:
     async with await AsyncConnection.connect(postgres_dsn, autocommit=True) as conn:
         cursor = await conn.execute(
@@ -226,14 +246,20 @@ async def test_schema_created_lazily_on_first_load(
 
 
 async def test_from_pool_load_and_save_round_trip_via_a_real_pool(
-    postgres_dsn: str, table: str
+    postgres_dsn: str,
+    table: str,
 ) -> None:
     consumer_name = _unique_consumer_name()
     async with AsyncConnectionPool(
-        postgres_dsn, min_size=1, max_size=2, open=False
+        postgres_dsn,
+        min_size=1,
+        max_size=2,
+        open=False,
     ) as pool:
         store = PostgresCheckpointStore.from_pool(
-            pool, consumer_name=consumer_name, table=table
+            pool,
+            consumer_name=consumer_name,
+            table=table,
         )
 
         assert await store.load() is None
@@ -254,10 +280,15 @@ async def test_from_pool_save_with_connection_is_unaffected_by_the_pool(
     """
     consumer_name = _unique_consumer_name()
     async with AsyncConnectionPool(
-        postgres_dsn, min_size=1, max_size=2, open=False
+        postgres_dsn,
+        min_size=1,
+        max_size=2,
+        open=False,
     ) as pool:
         store = PostgresCheckpointStore.from_pool(
-            pool, consumer_name=consumer_name, table=table
+            pool,
+            consumer_name=consumer_name,
+            table=table,
         )
 
         async with await AsyncConnection.connect(postgres_dsn) as conn:

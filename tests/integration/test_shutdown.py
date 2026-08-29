@@ -1,7 +1,7 @@
 """Integration tests for graceful shutdown against a real Postgres.
 
 Covers four named SIGTERM scenarios: `close()` is what a signal handler
-would invoke, and each scenario asserts `ReplicationClient.run` returns
+would invoke, and each scenario asserts `WalboxClient.run` returns
 cleanly -- no exception, no cancellation needed -- only once any in-flight
 handler has finished and been checkpointed.
 """
@@ -9,17 +9,16 @@ handler has finished and been checkpointed.
 import asyncio
 import contextlib
 import uuid
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 from psycopg import AsyncConnection
 
 from walbox.abc import CheckpointHandle
-from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
-from walbox.checkpoint import FileCheckpointStore
-from walbox.client import ReplicationClient
+from walbox.abc import WalboxOptions
+from walbox.checkpoint import PostgresCheckpointStore
+from walbox.client import WalboxClient
 
 pytestmark = pytest.mark.postgres
 
@@ -28,6 +27,10 @@ _STATUS_INTERVAL = 1
 
 def _unique_slot_name() -> str:
     return f"slot_{uuid.uuid4().hex}"
+
+
+def _unique_consumer_name() -> str:
+    return f"consumer_{uuid.uuid4().hex}"
 
 
 def _insert_row(entity_id: str) -> str:
@@ -44,15 +47,14 @@ def _entity_id(transaction: Transaction) -> str:
 def _options(
     postgres_dsn: str,
     slot_name: str,
-    checkpoint_path: Path,
+    consumer_name: str,
     **kwargs: object,
-) -> ReplicationOptions:
-    return ReplicationOptions(
-        consumer_name="test-consumer",
+) -> WalboxOptions:
+    return WalboxOptions(
+        consumer_name=consumer_name,
         dsn=postgres_dsn,
         slot_name=slot_name,
         publication_name="walbox_pub",
-        checkpoint_store=FileCheckpointStore(checkpoint_path),
         status_interval=_STATUS_INTERVAL,
         **kwargs,
     )
@@ -81,7 +83,7 @@ async def _wait_for_count(items: list, count: int, timeout: float = 10.0) -> Non
     await asyncio.wait_for(_poll(), timeout=timeout)
 
 
-async def _cleanup(client: ReplicationClient, run_task: "asyncio.Task[None]") -> None:
+async def _cleanup(client: WalboxClient, run_task: "asyncio.Task[None]") -> None:
     """Best-effort teardown, so a failed assertion never leaks a task/connection."""
     if not run_task.done():
         client.close()
@@ -96,10 +98,15 @@ async def _cleanup(client: ReplicationClient, run_task: "asyncio.Task[None]") ->
 
 
 @pytest.mark.timeout(30)
-async def test_sigterm_while_idle(postgres_dsn, outbox_table, tmp_path):
+async def test_sigterm_while_idle(postgres_dsn, outbox_table):
     slot_name = _unique_slot_name()
-    client = ReplicationClient(
-        _options(postgres_dsn, slot_name, tmp_path / "checkpoint")
+    consumer_name = _unique_consumer_name()
+    client = WalboxClient(
+        _options(postgres_dsn, slot_name, consumer_name),
+        checkpoint_store=PostgresCheckpointStore(
+            postgres_dsn,
+            consumer_name=consumer_name,
+        ),
     )
     run_task = asyncio.ensure_future(client.run(AsyncMock()))
     try:
@@ -113,10 +120,15 @@ async def test_sigterm_while_idle(postgres_dsn, outbox_table, tmp_path):
 
 
 @pytest.mark.timeout(30)
-async def test_sigterm_while_receiving(postgres_dsn, outbox_table, tmp_path):
+async def test_sigterm_while_receiving(postgres_dsn, outbox_table):
     slot_name = _unique_slot_name()
-    client = ReplicationClient(
-        _options(postgres_dsn, slot_name, tmp_path / "checkpoint")
+    consumer_name = _unique_consumer_name()
+    client = WalboxClient(
+        _options(postgres_dsn, slot_name, consumer_name),
+        checkpoint_store=PostgresCheckpointStore(
+            postgres_dsn,
+            consumer_name=consumer_name,
+        ),
     )
     delivered: list[Transaction] = []
 
@@ -152,12 +164,16 @@ async def test_sigterm_while_receiving(postgres_dsn, outbox_table, tmp_path):
 
 
 @pytest.mark.timeout(30)
-async def test_sigterm_while_processing_a_transaction(
-    postgres_dsn, outbox_table, tmp_path
-):
+async def test_sigterm_while_processing_a_transaction(postgres_dsn, outbox_table):
     slot_name = _unique_slot_name()
-    checkpoint_path = tmp_path / "checkpoint"
-    client = ReplicationClient(_options(postgres_dsn, slot_name, checkpoint_path))
+    consumer_name = _unique_consumer_name()
+    client = WalboxClient(
+        _options(postgres_dsn, slot_name, consumer_name),
+        checkpoint_store=PostgresCheckpointStore(
+            postgres_dsn,
+            consumer_name=consumer_name,
+        ),
+    )
 
     started = asyncio.Event()
     release = asyncio.Event()
@@ -190,22 +206,30 @@ async def test_sigterm_while_processing_a_transaction(
         await asyncio.wait_for(run_task, timeout=10.0)
 
         assert side_effects == ["processing-during-shutdown"]
-        assert await FileCheckpointStore(checkpoint_path).load() == processed_lsn[0]
+        reloaded_store = PostgresCheckpointStore(
+            postgres_dsn,
+            consumer_name=consumer_name,
+        )
+        assert await reloaded_store.load() == processed_lsn[0]
     finally:
         await _cleanup(client, run_task)
 
 
 @pytest.mark.timeout(30)
-async def test_sigterm_under_backpressure(postgres_dsn, outbox_table, tmp_path):
+async def test_sigterm_under_backpressure(postgres_dsn, outbox_table):
     slot_name = _unique_slot_name()
-    checkpoint_path = tmp_path / "checkpoint"
-    client = ReplicationClient(
+    consumer_name = _unique_consumer_name()
+    client = WalboxClient(
         _options(
             postgres_dsn,
             slot_name,
-            checkpoint_path,
+            consumer_name,
             max_pending_transactions=1,
-        )
+        ),
+        checkpoint_store=PostgresCheckpointStore(
+            postgres_dsn,
+            consumer_name=consumer_name,
+        ),
     )
 
     started = asyncio.Event()
@@ -240,7 +264,11 @@ async def test_sigterm_under_backpressure(postgres_dsn, outbox_table, tmp_path):
         await asyncio.wait_for(run_task, timeout=10.0)
 
         assert processed == ["bp-0"]
-        assert await FileCheckpointStore(checkpoint_path).load() == processed_lsn[0]
+        reloaded_store = PostgresCheckpointStore(
+            postgres_dsn,
+            consumer_name=consumer_name,
+        )
+        assert await reloaded_store.load() == processed_lsn[0]
     finally:
         await _cleanup(client, run_task)
 
@@ -250,11 +278,18 @@ async def test_sigterm_under_backpressure(postgres_dsn, outbox_table, tmp_path):
     redelivered: list[str] = []
 
     async def redeliver_handler(
-        transaction: Transaction, checkpoint: CheckpointHandle
+        transaction: Transaction,
+        checkpoint: CheckpointHandle,
     ) -> None:
         redelivered.append(_entity_id(transaction))
 
-    fresh_client = ReplicationClient(_options(postgres_dsn, slot_name, checkpoint_path))
+    fresh_client = WalboxClient(
+        _options(postgres_dsn, slot_name, consumer_name),
+        checkpoint_store=PostgresCheckpointStore(
+            postgres_dsn,
+            consumer_name=consumer_name,
+        ),
+    )
     fresh_task = asyncio.ensure_future(fresh_client.run(redeliver_handler))
     try:
         await _wait_for_count(redelivered, total_rows - 1, timeout=10.0)

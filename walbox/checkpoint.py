@@ -1,20 +1,19 @@
 """CheckpointStore implementations for durably tracking replay position."""
 
-import asyncio
 import contextlib
 import logging
-import os
 import time
 from collections.abc import AsyncGenerator
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from pathlib import Path
 from typing import Any
 from typing import Protocol
 
 import psycopg
 from psycopg import AsyncConnection
 from psycopg import sql
+
+from walbox.errors import CheckpointError
 
 logger = logging.getLogger("walbox.checkpoint")
 
@@ -41,80 +40,13 @@ async def _connect(dsn: str) -> AsyncGenerator[AsyncConnection[Any]]:
         yield conn
 
 
-class FileCheckpointStore:
-    """A crash-safe, disk-backed `CheckpointStore`.
-
-    Uses the standard write-to-temp-file, fsync, atomic-rename pattern: a
-    failure at any point during `save` leaves the previously-durable
-    checkpoint (if any) intact, never a half-written or corrupted one.
-    """
-
-    def __init__(self, path: str | Path) -> None:
-        """Initialize with the path the checkpoint LSN is persisted to."""
-        self._path = Path(path)
-
-    async def load(self) -> int | None:
-        """Return the last durably saved LSN, or None if the file doesn't exist yet."""
-        started_at = time.monotonic()
-        lsn = await asyncio.to_thread(self._load_sync)
-        logger.debug(
-            "checkpoint load completed in %.6fs, lsn=%s",
-            time.monotonic() - started_at,
-            lsn,
-            extra={"lsn": lsn},
-        )
-        return lsn
-
-    def _load_sync(self) -> int | None:
-        try:
-            text = self._path.read_text()
-        except FileNotFoundError:
-            return None
-        return int(text.strip())
-
-    async def save(
-        self,
-        lsn: int,
-        *,
-        connection: AsyncConnection[Any] | None = None,
-    ) -> None:
-        """Durably persist `lsn`.
-
-        `connection` is accepted, to satisfy the `CheckpointStore` protocol,
-        and ignored: a plain file can't join a Postgres transaction.
-        """
-        started_at = time.monotonic()
-        await asyncio.to_thread(self._save_sync, lsn)
-        logger.debug(
-            "checkpoint save completed in %.6fs, lsn=%s",
-            time.monotonic() - started_at,
-            lsn,
-            extra={"lsn": lsn},
-        )
-
-    def _save_sync(self, lsn: int) -> None:
-        tmp_path = self._path.with_name(self._path.name + ".tmp")
-        with tmp_path.open("w", encoding="utf-8") as f:
-            f.write(str(lsn))
-            f.flush()
-            os.fsync(f.fileno())
-        # Atomic on POSIX: readers never see a half-written file.
-        tmp_path.replace(self._path)
-        dir_fd = os.open(self._path.parent, os.O_RDONLY)
-        try:
-            # Durably persist the rename itself, not just the new file's bytes.
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
-
-
 class PostgresCheckpointStore:
     """A `CheckpointStore` backed by a row in a Postgres table.
 
     `save(connection=...)` can join a caller-supplied connection's
     transaction instead of opening its own, letting an application commit
     its own sink write and the checkpoint update atomically in one
-    transaction, something a `FileCheckpointStore` can't do.
+    transaction.
 
     Without `connection=`, `load()` and `save()` open one ad hoc connection
     per call, which is fine for checkpointing's low call volume. Use
@@ -168,7 +100,11 @@ class PostgresCheckpointStore:
         self._schema_ready = False
 
     async def load(self) -> int | None:
-        """Return the last durably saved LSN, or None if this consumer has none yet."""
+        """Return the last durably saved LSN, or None if this consumer has none yet.
+
+        Raises:
+            CheckpointError: If the saved LSN is negative.
+        """
         started_at = time.monotonic()
         async with self._acquire() as conn:
             await self._ensure_schema(conn)
@@ -179,6 +115,11 @@ class PostgresCheckpointStore:
             cursor = await conn.execute(query, (self._consumer_name,))
             row = await cursor.fetchone()
             lsn = row[0] if row is not None else None
+        if lsn is not None and lsn < 0:
+            message = (
+                f"checkpoint for consumer {self._consumer_name!r} is negative: {lsn}"
+            )
+            raise CheckpointError(message)
         logger.debug(
             "checkpoint load completed in %.6fs, lsn=%s",
             time.monotonic() - started_at,

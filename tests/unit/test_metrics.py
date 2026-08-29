@@ -15,10 +15,11 @@ from unittest.mock import AsyncMock
 from walbox.abc import ChangeEvent
 from walbox.abc import ChangeKind
 from walbox.abc import CheckpointHandle
+from walbox.abc import CheckpointStore
 from walbox.abc import Metrics
-from walbox.abc import ReplicationOptions
 from walbox.abc import Transaction
-from walbox.client import ReplicationClient
+from walbox.abc import WalboxOptions
+from walbox.client import WalboxClient
 from walbox.protocol import PrimaryKeepalive
 from walbox.protocol import XLogData
 
@@ -37,9 +38,8 @@ class _FakeCheckpointStore:
         self.saved.append(lsn)
 
 
-def _options(**kwargs: object) -> ReplicationOptions:
-    kwargs.setdefault("checkpoint_store", _FakeCheckpointStore())
-    return ReplicationOptions(
+def _options(**kwargs: object) -> WalboxOptions:
+    return WalboxOptions(
         consumer_name="test-consumer",
         dsn="postgresql://example",
         slot_name="test_slot",
@@ -48,8 +48,21 @@ def _options(**kwargs: object) -> ReplicationOptions:
     )
 
 
+def _client(
+    *,
+    checkpoint_store: CheckpointStore | None = None,
+    **kwargs: object,
+) -> WalboxClient:
+    return WalboxClient(
+        _options(**kwargs),
+        checkpoint_store if checkpoint_store is not None else _FakeCheckpointStore(),
+    )
+
+
 def _transaction(
-    xid: int = 1, commit_lsn: int = 100, n_changes: int = 1
+    xid: int = 1,
+    commit_lsn: int = 100,
+    n_changes: int = 1,
 ) -> Transaction:
     return Transaction(
         xid=xid,
@@ -63,7 +76,9 @@ def _transaction(
 
 
 def _type_payload(
-    type_oid: int = 16400, namespace: str = "public", name: str = "e"
+    type_oid: int = 16400,
+    namespace: str = "public",
+    name: str = "e",
 ) -> bytes:
     def _cstring(value: str) -> bytes:
         return value.encode("utf-8") + b"\x00"
@@ -73,7 +88,7 @@ def _type_payload(
 
 async def test_metrics_callback_invoked_with_current_counters():
     recorded: list[Metrics] = []
-    client = ReplicationClient(_options(on_metrics=recorded.append))
+    client = _client(on_metrics=recorded.append)
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
         await checkpoint.save(transaction.commit_lsn)
@@ -98,7 +113,7 @@ async def test_checkpoint_latency_reflects_the_handler_calling_save():
         async def save(self, lsn: int, *, connection: object | None = None) -> None:
             await asyncio.sleep(0.05)
 
-    client = ReplicationClient(_options(checkpoint_store=_SlowCheckpointStore()))
+    client = _client(checkpoint_store=_SlowCheckpointStore())
     assert client._current_metrics().last_checkpoint_latency_seconds == 0.0
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
@@ -110,7 +125,7 @@ async def test_checkpoint_latency_reflects_the_handler_calling_save():
 
 
 async def test_checkpoint_latency_stays_at_zero_if_the_handler_never_saves():
-    client = ReplicationClient(_options())
+    client = _client()
     handler = AsyncMock()
 
     await client._process(_transaction(xid=1, commit_lsn=100), handler)
@@ -119,7 +134,7 @@ async def test_checkpoint_latency_stays_at_zero_if_the_handler_never_saves():
 
 
 async def test_transactions_since_checkpoint_increments_when_the_handler_never_saves():
-    client = ReplicationClient(_options())
+    client = _client()
     handler = AsyncMock()
 
     await client._process(_transaction(xid=1, commit_lsn=100), handler)
@@ -129,10 +144,11 @@ async def test_transactions_since_checkpoint_increments_when_the_handler_never_s
 
 
 async def test_transactions_since_checkpoint_resets_when_the_handler_saves():
-    client = ReplicationClient(_options())
+    client = _client()
 
     async def never_saves(
-        transaction: Transaction, checkpoint: CheckpointHandle
+        transaction: Transaction,
+        checkpoint: CheckpointHandle,
     ) -> None:
         pass
 
@@ -151,7 +167,7 @@ async def test_transactions_since_checkpoint_resets_when_the_handler_saves():
 
 
 async def test_processing_a_transaction_logs_transactions_since_checkpoint(caplog):
-    client = ReplicationClient(_options())
+    client = _client()
     handler = AsyncMock()
 
     with caplog.at_level(logging.DEBUG, logger="walbox.client"):
@@ -169,7 +185,7 @@ async def test_metrics_callback_exception_is_caught_and_logged(caplog):
     def _raising_callback(metrics: Metrics) -> None:
         raise ValueError(metrics)
 
-    client = ReplicationClient(_options(on_metrics=_raising_callback))
+    client = _client(on_metrics=_raising_callback)
 
     with caplog.at_level(logging.ERROR, logger="walbox.client"):
         await client._maybe_report_metrics()  # must not raise
@@ -178,14 +194,14 @@ async def test_metrics_callback_exception_is_caught_and_logged(caplog):
 
 
 async def test_no_metrics_callback_configured_is_a_no_op():
-    client = ReplicationClient(_options())
+    client = _client()
     assert client.options.on_metrics is None
 
     await client._maybe_report_metrics()  # must not raise
 
 
 async def test_replication_lag_reflects_keepalive_wal_end():
-    client = ReplicationClient(_options())
+    client = _client()
     xlog = XLogData(wal_start=700, wal_end=700, send_time=0, payload=_type_payload())
     await client._handle_xlog_data(xlog)
 
@@ -197,8 +213,14 @@ async def test_replication_lag_reflects_keepalive_wal_end():
     assert metrics.replication_lag_bytes == 300
 
 
+async def test_metrics_consumer_name_reflects_replication_options():
+    client = _client()
+
+    assert client._current_metrics().consumer_name == "test-consumer"
+
+
 async def test_queue_depth_reflects_actual_queue_size():
-    client = ReplicationClient(_options(max_pending_transactions=10))
+    client = _client(max_pending_transactions=10)
     for xid in range(3):
         client._queue.put_nowait(_transaction(xid=xid, commit_lsn=xid))
 
