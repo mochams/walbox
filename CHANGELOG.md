@@ -7,6 +7,8 @@ follows [Semantic Versioning](https://semver.org/) (pre-1.0 tags use the
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] - 2026-08-29
+
 ### Breaking changes
 
 - **`ReplicationOptions` removed.** `WalboxOptions` is now the only options
