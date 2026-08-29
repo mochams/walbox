@@ -218,7 +218,7 @@ To scale horizontally, run multiple walbox consumers, each with:
 
 ```python
 # Consumer A: processes even entity_ids
-client_a = WalboxBuilder.build(WalboxOptions(
+client_a = Walbox.build(WalboxOptions(
     consumer_name="consumer-a",
     dsn=dsn,
     slot_name="slot-a",
@@ -226,7 +226,7 @@ client_a = WalboxBuilder.build(WalboxOptions(
 ))
 
 # Consumer B: processes odd entity_ids
-client_b = WalboxBuilder.build(WalboxOptions(
+client_b = Walbox.build(WalboxOptions(
     consumer_name="consumer-b",
     dsn=dsn,
     slot_name="slot-b",

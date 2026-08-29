@@ -50,7 +50,7 @@ from walbox import (
     ChangeKind,
     CheckpointHandle,
     Transaction,
-    WalboxBuilder,
+    Walbox,
     WalboxOptions,
 )
 
@@ -72,7 +72,7 @@ async def main() -> None:
         publication_name="walbox_pub",
     )
 
-    client = WalboxBuilder.build(options)
+    client = Walbox.build(options)
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

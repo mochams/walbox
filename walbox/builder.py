@@ -1,16 +1,16 @@
-"""Builds a fully wired `WalboxClient` from public `WalboxOptions`."""
+"""Builds a fully wired `Client` from public `WalboxOptions`."""
 
 from walbox.abc import WalboxOptions
 from walbox.checkpoint import ConnectionPool
 from walbox.checkpoint import PostgresCheckpointStore
-from walbox.client import WalboxClient
+from walbox.client import Client
 
 
-class WalboxBuilder:
-    """Constructs a `WalboxClient` without exposing checkpoint-store wiring."""
+class Walbox:
+    """Constructs a `Client` without exposing checkpoint-store wiring."""
 
     @staticmethod
-    def build(options: WalboxOptions) -> WalboxClient:
+    def build(options: WalboxOptions) -> Client:
         """Build a client whose checkpoint store opens ad hoc connections.
 
         Opens and closes a new connection for every `checkpoint.save()`
@@ -20,19 +20,19 @@ class WalboxBuilder:
         doesn't matter.
 
         Returns:
-            A `WalboxClient` ready to `run()`.
+            A `Client` ready to `run()`.
         """
         checkpoint_store = PostgresCheckpointStore(
             options.dsn,
             consumer_name=options.consumer_name,
         )
-        return WalboxClient(options, checkpoint_store)
+        return Client(options, checkpoint_store)
 
     @staticmethod
     def build_with_pool(
         options: WalboxOptions,
         pool: ConnectionPool,
-    ) -> WalboxClient:
+    ) -> Client:
         """Build a client whose checkpoint store reuses your own connection pool.
 
         `pool` is owned by the caller: opening and closing it (for example
@@ -41,10 +41,10 @@ class WalboxBuilder:
         handler's own downstream writes.
 
         Returns:
-            A `WalboxClient` ready to `run()`.
+            A `Client` ready to `run()`.
         """
         checkpoint_store = PostgresCheckpointStore.from_pool(
             pool,
             consumer_name=options.consumer_name,
         )
-        return WalboxClient(options, checkpoint_store)
+        return Client(options, checkpoint_store)

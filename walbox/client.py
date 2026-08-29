@@ -55,7 +55,7 @@ def _next_backoff_value(current: float) -> float:
     return min(current * 2, _MAX_BACKOFF)
 
 
-class WalboxClient:
+class Client:
     """Consumes a PostgreSQL logical replication stream and dispatches transactions."""
 
     def __init__(

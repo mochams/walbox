@@ -130,8 +130,8 @@ MetricsCallback = Callable[[Metrics], None]
 class WalboxOptions:
     """Configuration for a walbox client, shared by every checkpoint backend.
 
-    `WalboxClient` takes this plus a `CheckpointStore` directly;
-    `WalboxBuilder` constructs the checkpoint store for you.
+    `Client` takes this plus a `CheckpointStore` directly;
+    `Walbox` constructs the checkpoint store for you.
     """
 
     consumer_name: str

@@ -13,7 +13,7 @@ import pytest
 
 from walbox.abc import CheckpointHandle
 from walbox.abc import WalboxOptions
-from walbox.client import WalboxClient
+from walbox.client import Client
 from walbox.errors import CheckpointError
 
 
@@ -39,8 +39,8 @@ def _options() -> WalboxOptions:
     )
 
 
-def _client() -> WalboxClient:
-    return WalboxClient(_options(), _FakeCheckpointStore())
+def _client() -> Client:
+    return Client(_options(), _FakeCheckpointStore())
 
 
 def test_record_durable_progress_advances_durable_lsn():

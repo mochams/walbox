@@ -20,7 +20,7 @@ from walbox.abc import CheckpointHandle
 from walbox.abc import Transaction
 from walbox.abc import WalboxOptions
 from walbox.checkpoint import PostgresCheckpointStore
-from walbox.client import WalboxClient
+from walbox.client import Client
 
 pytestmark = pytest.mark.postgres
 
@@ -66,9 +66,9 @@ def _decode_flushed_lsn(payload: bytes) -> int:
 
 
 class _RunningClient:
-    """Runs a `WalboxClient` as a background task for one test's lifetime."""
+    """Runs a `Client` as a background task for one test's lifetime."""
 
-    def __init__(self, client: WalboxClient, handler) -> None:
+    def __init__(self, client: Client, handler) -> None:
         self._client = client
         self._task = asyncio.ensure_future(client.run(handler))
 
@@ -99,7 +99,7 @@ async def test_periodic_status_update_is_sent_without_any_transaction_activity(
         publication_name="walbox_pub",
         status_interval=_STATUS_INTERVAL,
     )
-    client = WalboxClient(options, checkpoint_store=_NoOpCheckpointStore())
+    client = Client(options, checkpoint_store=_NoOpCheckpointStore())
 
     write_calls: list[bytes] = []
     original_new_transport = client._new_transport
@@ -144,7 +144,7 @@ async def test_feedback_reflects_the_checkpoint_after_a_manual_save(
         publication_name="walbox_pub",
         status_interval=_STATUS_INTERVAL,
     )
-    client = WalboxClient(options, checkpoint_store=checkpoint_store)
+    client = Client(options, checkpoint_store=checkpoint_store)
     saved: list[int] = []
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:
@@ -209,7 +209,7 @@ async def test_feedback_stays_at_the_floor_when_the_handler_never_saves(
         publication_name="walbox_pub",
         status_interval=_STATUS_INTERVAL,
     )
-    client = WalboxClient(options, checkpoint_store=checkpoint_store)
+    client = Client(options, checkpoint_store=checkpoint_store)
     seen: list[Transaction] = []
 
     async def handler(transaction: Transaction, checkpoint: CheckpointHandle) -> None:

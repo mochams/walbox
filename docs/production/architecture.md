@@ -87,7 +87,7 @@ A walbox consumer opens up to three kinds of connections, each managed different
 
 **Replication connection**: opened when you call `client.run()`, reconnects automatically on network failure, and closes on graceful shutdown after a final status update. walbox manages this end to end; you never touch it directly.
 
-**Checkpoint connection**: built by `WalboxBuilder`. With `build()`, walbox opens a new connection for each `checkpoint.save()` call and closes it right after. With `build_with_pool()`, it borrows a connection from your own pool instead. Either way, a checkpoint save is a single INSERT or UPDATE, so it's fast and adds little latency at any volume — but the per-call connect/disconnect with `build()` still adds up under frequent checkpointing. Prefer `build_with_pool()` unless you have a reason not to add the `psycopg-pool` dependency.
+**Checkpoint connection**: built by `Walbox`. With `build()`, walbox opens a new connection for each `checkpoint.save()` call and closes it right after. With `build_with_pool()`, it borrows a connection from your own pool instead. Either way, a checkpoint save is a single INSERT or UPDATE, so it's fast and adds little latency at any volume — but the per-call connect/disconnect with `build()` still adds up under frequent checkpointing. Prefer `build_with_pool()` unless you have a reason not to add the `psycopg-pool` dependency.
 
 **Your handler's connections**: anything your handler opens to reach its own sink, a broker client, a database pool, an HTTP client, is your responsibility to manage. walbox doesn't know about these and won't close them for you.
 
@@ -134,7 +134,7 @@ import asyncio
 import signal
 
 async def main() -> None:
-    client = WalboxBuilder.build(options)
+    client = Walbox.build(options)
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

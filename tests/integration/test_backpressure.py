@@ -19,7 +19,7 @@ from walbox.abc import CheckpointHandle
 from walbox.abc import Transaction
 from walbox.abc import WalboxOptions
 from walbox.checkpoint import PostgresCheckpointStore
-from walbox.client import WalboxClient
+from walbox.client import Client
 
 pytestmark = pytest.mark.postgres
 
@@ -92,9 +92,9 @@ def _options(
 
 
 class _RunningClient:
-    """Runs a `WalboxClient` as a background task for one test's lifetime."""
+    """Runs a `Client` as a background task for one test's lifetime."""
 
-    def __init__(self, client: WalboxClient, handler) -> None:
+    def __init__(self, client: Client, handler) -> None:
         self._client = client
         self._task = asyncio.ensure_future(client.run(handler))
 
@@ -115,11 +115,11 @@ class _RunningClient:
 class _QueueSizeSampler:
     """Polls a client's queue depth in the background until stopped."""
 
-    def __init__(self, client: WalboxClient, interval: float = 0.02) -> None:
+    def __init__(self, client: Client, interval: float = 0.02) -> None:
         self.samples: list[int] = []
         self._task = asyncio.ensure_future(self._run(client, interval))
 
-    async def _run(self, client: WalboxClient, interval: float) -> None:
+    async def _run(self, client: Client, interval: float) -> None:
         while True:
             self.samples.append(client._queue.qsize())
             await asyncio.sleep(interval)
@@ -144,7 +144,7 @@ async def test_bounded_queue_keeps_memory_bounded_under_a_slow_handler(
         await release.wait()
 
     consumer_name = _unique_consumer_name()
-    client = WalboxClient(
+    client = Client(
         _options(postgres_dsn, slot_name, consumer_name),
         checkpoint_store=PostgresCheckpointStore(
             postgres_dsn,
@@ -185,7 +185,7 @@ async def test_feedback_does_not_advance_while_backpressured(
         await release.wait()
 
     consumer_name = _unique_consumer_name()
-    client = WalboxClient(
+    client = Client(
         _options(postgres_dsn, slot_name, consumer_name),
         checkpoint_store=PostgresCheckpointStore(
             postgres_dsn,
@@ -241,7 +241,7 @@ async def test_replication_lag_grows_instead_of_the_process_buffering_unboundedl
         await release.wait()
 
     consumer_name = _unique_consumer_name()
-    client = WalboxClient(
+    client = Client(
         _options(postgres_dsn, slot_name, consumer_name),
         checkpoint_store=PostgresCheckpointStore(
             postgres_dsn,

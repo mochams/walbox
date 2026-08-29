@@ -49,7 +49,7 @@ from walbox import (
     ChangeKind,
     CheckpointHandle,
     Transaction,
-    WalboxBuilder,
+    Walbox,
     WalboxOptions,
 )
 
@@ -113,7 +113,7 @@ async def main() -> None:
         publication_name="walbox_pub",
     )
 
-    replication_client = WalboxBuilder.build(options)
+    replication_client = Walbox.build(options)
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, replication_client.close)

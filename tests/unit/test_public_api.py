@@ -12,9 +12,9 @@ _EXPECTED_ALL = {
     "ConnectionPool",
     "Metrics",
     "MetricsCallback",
-    "WalboxClient",
+    "Client",
     "Transaction",
-    "WalboxBuilder",
+    "Walbox",
     "WalboxError",
     "WalboxOptions",
 }

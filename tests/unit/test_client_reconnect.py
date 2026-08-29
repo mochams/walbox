@@ -1,4 +1,4 @@
-"""Unit tests for reconnect/backoff orchestration in `WalboxClient.run`.
+"""Unit tests for reconnect/backoff orchestration in `Client.run`.
 
 Pure, no Postgres: a fake `ReplicationTransport` double drives the outer
 retry loop and its interaction with `_run_once`, with `asyncio.sleep`
@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from walbox.abc import WalboxOptions
-from walbox.client import WalboxClient
+from walbox.client import Client
 from walbox.client import _next_backoff_value
 from walbox.errors import DecodeError
 from walbox.errors import ReplicationConnectionError
@@ -136,7 +136,7 @@ async def test_run_retries_on_replication_connection_error_and_eventually_succee
         connect_fail_times=2,
         frames=[_xlog_payload(_begin_inner()), _xlog_payload(_commit_inner())],
     )
-    client = WalboxClient(_options(), _FakeCheckpointStore())
+    client = Client(_options(), _FakeCheckpointStore())
     client._new_transport = lambda: transport
     handler = AsyncMock()
 
@@ -151,7 +151,7 @@ async def test_run_retries_on_replication_connection_error_and_eventually_succee
 
 async def test_non_connection_errors_are_not_retried():
     transport = _FakeTransport(frames=[_xlog_payload(b"Z")])
-    client = WalboxClient(_options(), _FakeCheckpointStore())
+    client = Client(_options(), _FakeCheckpointStore())
     client._new_transport = lambda: transport
     handler = AsyncMock()
 
@@ -166,7 +166,7 @@ async def test_handler_exceptions_are_not_retried():
     transport = _FakeTransport(
         frames=[_xlog_payload(_begin_inner()), _xlog_payload(_commit_inner())],
     )
-    client = WalboxClient(_options(), _FakeCheckpointStore())
+    client = Client(_options(), _FakeCheckpointStore())
     client._new_transport = lambda: transport
 
     async def handler(transaction: object, checkpoint: object) -> None:
@@ -187,7 +187,7 @@ async def test_backoff_resets_after_a_successful_run_once(monkeypatch):
 
     monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
     transport = _FakeTransport(connect_fail_times=1)
-    client = WalboxClient(_options(), _FakeCheckpointStore())
+    client = Client(_options(), _FakeCheckpointStore())
     client._new_transport = lambda: transport
 
     original_read = transport.read
