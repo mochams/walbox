@@ -5,17 +5,19 @@
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Async Python runtime for consuming PostgreSQL logical replication as a stream of committed transactions. Built for the **transactional outbox pattern**: write an outbox row in the same database transaction as your business data, then stream those committed inserts to an external system with no polling and no `LISTEN`/`NOTIFY`. That's the common case. The same guarantees apply to any table you publish.
+Async Python runtime for consuming PostgreSQL logical replication as a stream of committed transactions.
 
 **[📖 Documentation](https://mochams.github.io/walbox/) · [⚡ Quickstart](https://mochams.github.io/walbox/getting-started/quickstart/)**
 
-## Some reasons you might want to use walbox
+**Some reasons you might want to use walbox:**
 
-- **You're using the transactional outbox pattern** and need a reliable way to consume outbox rows.
-- **You need to reliably tell another system about a change**, without polling a table or wiring up `LISTEN`/`NOTIFY` across processes.
-- **You want to avoid the dual-write problem** between your database and an external system.
-- **You want to use PostgreSQL's durability** without running a separate CDC platform for a simple use case.
-- **You need to stream changes from other tables too.** walbox works with any table covered by your publication.
+- **You want to react to database changes in real time** without polling tables or adding fragile trigger-based workarounds.
+- **You care about reliable delivery**: walbox checkpoints progress durably so it can resume cleanly after restarts or connection drops.
+- **You’re building around the transactional outbox pattern** and want a consumer that preserves commit ordering and handles recovery sensibly.
+- **You want backpressure built in**, so a slow handler does not turn into unbounded memory growth or silent data loss.
+- **You need a Python async consumer** that plugs directly into PostgreSQL logical replication instead of shoving data through a separate broker.
+- **You want to stream changes from published tables** without writing your own replication client, reconnect logic, or checkpoint tracking.
+- **You want operational visibility**: retries, lag, queue depth, and checkpoint timing are all surfaced so production behavior is easier to reason about.
 
 ## Guarantees
 
@@ -92,7 +94,7 @@ VALUES ('user', '42', 'created', '{"name":"Alice"}'::jsonb);
 
 The handler receives the row and saves a durable checkpoint. On restart, it resumes from that checkpoint. No data loss.
 
-See [**Examples**](https://github.com/mochams/walbox/tree/main/examples) for working patterns: webhooks, message brokers, PostgreSQL sinks, and more.
+See [**Examples**](https://github.com/mochams/walbox/tree/main/examples) for working patterns: publishing to a message broker, writing to a PostgreSQL sink with exactly-once effects, sharded concurrent handling, and metrics.
 
 ## Next steps
 
@@ -102,8 +104,26 @@ See [**Examples**](https://github.com/mochams/walbox/tree/main/examples) for wor
 
 ## Status
 
-walbox is still in its early days. It is tested with 100% branch coverage and integration tests against real PostgreSQL, but the API may change as the project evolves toward 1.0.0.
+walbox is at v1.0.0. It has 100% branch coverage, integration tests against real PostgreSQL, and went through three pre-release cycles (beta.1, beta.2, rc.1) to settle the API.
 
-See [`CHANGELOG.md`](CHANGELOG.md) for what's changed release to release.
+See [`CHANGELOG.md`](CHANGELOG.md) for what's changed release to release, and the [Upgrading guide](https://mochams.github.io/walbox/migration/) if you're on a pre-1.0.0 version.
+
+## API Stability
+
+As of v1.0.0, the following are stable and won't break within the 1.0.x series:
+
+- `Walbox` (`build`, `build_with_pool`)
+- `Client`
+- `WalboxOptions`
+- `ConnectionPool`
+- `Transaction`
+- `ChangeEvent`, `ChangeKind`
+- `CheckpointHandle`
+- `Metrics`, `MetricsCallback`
+- `WalboxError` and its subclasses
+
+`walbox.abc` and `walbox.checkpoint` expose the underlying protocols and the PostgreSQL checkpoint store, for advanced use like manual `Client` construction or a custom `CheckpointStore`. These are lower-level and may change shape in a minor release.
+
+1.0.x releases can add fields or methods, but won't remove or change the meaning of anything listed above.
 
 **Development**: see [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup and [`LICENSE`](LICENSE) for terms.

@@ -26,7 +26,7 @@ theme:
         icon: "material/lightbulb-outline"
         name: "Switch to light mode"
 
-  favicon: img/walbox-art.svg
+  favicon: img/walbox.svg
   logo: img/walbox-light.svg
 
   font:
@@ -69,14 +69,13 @@ nav:
       - Quickstart: getting-started/quickstart.md
   - Production:
       - Architecture: production/architecture.md
-      - Delivery Guarantees: production/delivery-guarantees.md
-      - Setup & Deployment: production/setup.md
-      - Monitoring & Backpressure: production/monitoring.md
+      - Guarantees: production/delivery-guarantees.md
+      - Setup: production/setup.md
+      - Monitoring: production/monitoring.md
   - Examples:
       - Outbox: examples/transactional-outbox.md
       - PostgreSQL: examples/postgresql.md
-      - NATS: examples/nats.md
-      - Temporal: examples/temporal.md
-      - RabbitMQ: examples/rabbitmq.md
-      - Webhooks: examples/webhooks.md
-  - Changelog: https://github.com/mochams/walbox/blob/main/CHANGELOG.md
+  - Changes:
+      - Upgrading: migration.md
+      - Changelog: https://github.com/mochams/walbox/blob/main/CHANGELOG.md
+  - FAQ: faq.md

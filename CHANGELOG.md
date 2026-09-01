@@ -7,6 +7,40 @@ follows [Semantic Versioning](https://semver.org/) (pre-1.0 tags use the
 
 ## [Unreleased]
 
+### Added
+
+- `docs/migration.md`: an Upgrading guide covering every pre-1.0.0 version
+  transition, newest first.
+- `docs/faq.md`: answers to common questions, cross-linked to the fuller
+  docs.
+- `examples/metrics.py`: a runnable example contrasting a blocking
+  `on_metrics` callback with a non-blocking one, plus a matching good/bad
+  section in the Monitoring guide.
+- `examples/README.md`: prerequisites and how to run each example script.
+- An API Stability section in the README, listing what's guaranteed not to
+  break within the 1.0.x series.
+
+### Changed
+
+- `ChangeEvent`'s docstring documents what `new`/`old` contain for each
+  `ChangeKind`.
+- `WalboxOptions`'s docstring notes that `on_metrics` runs synchronously.
+- README's Status section updated to reflect the v1.0.0 release, replacing
+  the pre-1.0 "early days" wording.
+- Example scripts consolidated further: `postgres_sink.py` renamed to
+  `postgres.py`, backed by `examples/table.sql` and
+  `examples/postgres-sink.sql` instead of hand-copied SQL.
+- Per-integration example docs for NATS, RabbitMQ, Temporal, and webhooks
+  removed. The docs site now covers the outbox and PostgreSQL sink patterns,
+  with the runnable scripts in `examples/` covering brokers and concurrency
+  directly.
+- Docs nav reorganized: Upgrading and Changelog grouped under a single
+  "Changes" section; FAQ moved to the end of the nav.
+- `pyproject.toml` classifier updated from `3 - Alpha` to
+  `5 - Production/Stable`.
+- Fixed a table-name mismatch in the PostgreSQL sink doc (`events` →
+  `published_table_projection`) left over from the example consolidation.
+
 ## [1.0.0-rc.1] - 2026-08-29
 
 ### Breaking changes
@@ -23,12 +57,11 @@ follows [Semantic Versioning](https://semver.org/) (pre-1.0 tags use the
   pool)`, replacing manual construction of `PostgresCheckpointStore` +
   `ReplicationOptions` + `ReplicationClient`.
 - **`Walbox.build_with_pool()` takes your own connection pool**
-  (`build_with_pool(options, pool)`) instead of building one from a
-  `PoolOptions` config object (`PoolOptions` removed). You open and close
-  the pool; walbox only uses it.
+  (`build_with_pool(options, pool)`). You open and close the pool; walbox
+  only uses it.
 - **Top-level `walbox` export surface changed.** Removed: `CheckpointStore`,
-  `PostgresCheckpointStore`, `ReplicationOptions`, `FileCheckpointStore`,
-  `PoolOptions`. Added: `WalboxOptions`, `Walbox`, `ConnectionPool`.
+  `PostgresCheckpointStore`, `ReplicationOptions`, `FileCheckpointStore`.
+  Added: `WalboxOptions`, `Walbox`, `ConnectionPool`.
   Advanced/manual construction remains available via `walbox.abc` and
   `walbox.checkpoint`.
 - **Example scripts consolidated and renamed**, all now built on

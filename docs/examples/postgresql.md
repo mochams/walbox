@@ -2,7 +2,7 @@
 
 This example shows the same-transaction checkpoint pattern when your sink is PostgreSQL itself. This achieves exactly-once effects without external deduplication.
 
-The code is in [`examples/postgres_sink.py`](https://github.com/mochams/walbox/blob/main/examples/postgres_sink.py).
+The code is in [`examples/postgres.py`](https://github.com/mochams/walbox/blob/main/examples/postgres.py).
 
 ## The pattern
 
@@ -15,7 +15,7 @@ async def handle(tx: Transaction, checkpoint: CheckpointHandle, *, pool) -> None
                 continue
 
             await conn.execute(
-                "INSERT INTO events (...) VALUES (...)",
+                "INSERT INTO published_table_projection (...) VALUES (...)",
                 (change.new["entity_type"], ...)
             )
 
@@ -37,9 +37,10 @@ The key difference from the [Transactional Outbox](transactional-outbox.md) exam
 
 ## Setup
 
-Create both the published table and your sink table:
+Create the published table and publication with [`examples/table.sql`](https://github.com/mochams/walbox/blob/main/examples/table.sql), then the sink table with [`examples/postgres-sink.sql`](https://github.com/mochams/walbox/blob/main/examples/postgres-sink.sql):
 
 ```sql
+-- examples/table.sql
 CREATE TABLE published_table (
     id          BIGSERIAL PRIMARY KEY,
     entity_type TEXT NOT NULL,
@@ -51,8 +52,9 @@ CREATE TABLE published_table (
 
 CREATE PUBLICATION walbox_pub FOR TABLE published_table;
 
--- Your sink table (whatever you're projecting into)
-CREATE TABLE events (
+-- examples/postgres-sink.sql: the downstream sink this example writes to,
+-- a projection built from published_table inserts
+CREATE TABLE published_table_projection (
     entity_type TEXT NOT NULL,
     entity_id   TEXT NOT NULL,
     event_type  TEXT NOT NULL,
@@ -65,7 +67,7 @@ CREATE TABLE events (
 
 ```bash
 export WALBOX_DSN="postgresql://user:password@localhost/dbname"
-python examples/postgres_sink.py
+python examples/postgres.py
 ```
 
 In another terminal, insert a row:
@@ -75,7 +77,7 @@ INSERT INTO published_table (entity_type, entity_id, event_type, payload)
 VALUES ('user', '42', 'created', '{"name": "Alice"}'::jsonb);
 ```
 
-The handler writes to the `events` table and saves the checkpoint in one transaction.
+The handler writes to the `published_table_projection` table and saves the checkpoint in one transaction.
 
 ## Why this is exactly-once
 

@@ -132,4 +132,4 @@ graph LR
 
 - **Learn more**: [Architecture](../production/architecture.md) explains the full model and [Delivery Guarantees](../production/delivery-guarantees.md) covers what at-least-once means
 - **Production setup**: See [Setup & Deployment](../production/setup.md) for PostgreSQL configuration, managed databases, and running in production
-- **Examples**: Browse [working examples](../examples/transactional-outbox.md) for common patterns (webhooks, message brokers, etc.)
+- **Examples**: Browse [working examples](../examples/transactional-outbox.md) for the outbox and [PostgreSQL sink](../examples/postgresql.md) patterns, or the runnable scripts in [`examples/`](https://github.com/mochams/walbox/tree/main/examples) for message brokers, sharded concurrency, and metrics
