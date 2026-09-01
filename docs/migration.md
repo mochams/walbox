@@ -2,11 +2,11 @@
 
 walbox went through three pre-release versions before v1.0.0: `beta`, `beta.1`, `beta.2`, and `rc.1`. Sections below are ordered newest first. Find the version you're upgrading from and read down to the bottom; each section is cumulative.
 
-See [`CHANGELOG.md`](https://github.com/mochama/walbox/blob/main/CHANGELOG.md) for the complete, unedited history.
+See [`CHANGELOG.md`](https://github.com/mochams/walbox/blob/main/CHANGELOG.md) for the complete, unedited history.
 
 ## `rc.1` → `1.0.0`
 
-No breaking changes. The public API is unchanged from `rc.1`; this release is documentation and example additions (an FAQ, this Upgrading guide, a metrics example). See the [Unreleased section of the CHANGELOG](https://github.com/mochama/walbox/blob/main/CHANGELOG.md#unreleased) for the full list.
+No breaking changes. The public API is unchanged from `rc.1`; this release is documentation and example additions (an FAQ, this Upgrading guide, a metrics example). See the [v1.0.0 CHANGELOG entry](https://github.com/mochams/walbox/blob/main/CHANGELOG.md#100---2026-09-01) for the full list.
 
 ## `beta.2` → `rc.1`
 
