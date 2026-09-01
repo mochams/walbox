@@ -24,7 +24,21 @@ class ChangeKind(StrEnum):
 
 @dataclass
 class ChangeEvent:
-    """A single row-level change within a transaction."""
+    """A single row-level change within a transaction.
+
+    `new` and `old` depend on `kind`:
+
+    - INSERT: `new` has the inserted row, `old` is None.
+    - UPDATE: `new` has the row after the change, `old` has it before.
+      `old` needs a usable REPLICA IDENTITY (a primary key, or
+      REPLICA IDENTITY FULL) on the table; without one it's None.
+    - DELETE: `new` is None, `old` has the deleted row (same REPLICA
+      IDENTITY requirement as UPDATE).
+    - TRUNCATE: both are None.
+
+    Dict keys are column names; values are the column's Python-typed
+    value, with SQL NULL represented as None.
+    """
 
     kind: ChangeKind
     table: str
@@ -132,6 +146,10 @@ class WalboxOptions:
 
     `Client` takes this plus a `CheckpointStore` directly;
     `Walbox` constructs the checkpoint store for you.
+
+    `on_metrics` runs synchronously on the same timer as status updates.
+    Don't block in it; hand the `Metrics` snapshot off to a queue or task
+    if you need to send it elsewhere. See docs/production/monitoring.md.
     """
 
     consumer_name: str

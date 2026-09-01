@@ -18,15 +18,15 @@
     </a>
 </p>
 
-Publish a table in PostgreSQL, and walbox streams every committed change out of it. It’s a natural fit for the transactional outbox pattern: write an outbox row in the same transaction as your business data, and let walbox carry it from there. That's just the common case, though. The same guarantees hold for any table you publish.
+Publish a table in PostgreSQL, and walbox streams every committed change out of it as a durable, at-least-once feed.
 
-It delivers each transaction at least once, resumes from a durable checkpoint after any restart, and applies backpressure instead of buffering without limit when your handler falls behind. See [Introduction](getting-started/introduction.md) for the full list of guarantees and where walbox's limits are.
+walbox delivers each transaction at least once, resumes from a durable checkpoint after any restart, and applies backpressure instead of buffering without limit when your handler falls behind. See [Introduction](getting-started/introduction.md) for the full list of guarantees and where walbox's limits are.
 
 ## How it works
 
 ```mermaid
 graph LR
-    A["Business<br/>Transaction"] --> B["Row Change<br/>Committed"]
+    B["Row Change<br/>Committed"]
     B --> C["PostgreSQL<br/>WAL"]
     C --> D["walbox<br/>Consumer"]
     D --> E["Application<br/>Handler"]
@@ -52,7 +52,7 @@ See [Getting Started](getting-started/introduction.md) for setup, or jump to [Ex
 
 - **Python 3.13+**
 - **PostgreSQL 14+**
-- **Psycopg 3** (included with `pip install walbox`)
+- **Psycopg 3**
 
 By default, Psycopg uses your system's libpq. If you don't have libpq installed, Psycopg can use its own bundled version. See [Getting Started](getting-started/introduction.md) for details.
 

@@ -26,6 +26,22 @@ options = WalboxOptions(
 
 **Important**: `on_metrics` is **synchronous** (not async). If you need to send metrics to an external system, spawn a non-blocking task instead of blocking in the callback.
 
+**Bad** (blocks the event loop for as long as the call takes, delaying replication reads and handler dispatch too):
+
+```python
+def on_metrics(metrics: Metrics) -> None:
+    requests.post("https://metrics.example.com", json={"queue_depth": metrics.queue_depth})
+```
+
+**Good** (hand the snapshot off and return immediately):
+
+```python
+def on_metrics(metrics: Metrics) -> None:
+    metric_queue.put_nowait(metrics)  # a background task drains this and sends it
+```
+
+See [`examples/metrics.py`](https://github.com/mochams/walbox/blob/main/examples/metrics.py) for a complete runnable version of both.
+
 ## Available metrics
 
 | Field | Type | Description |
