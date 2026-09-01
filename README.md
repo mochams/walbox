@@ -108,22 +108,4 @@ walbox is at v1.0.0. It has 100% branch coverage, integration tests against real
 
 See [`CHANGELOG.md`](CHANGELOG.md) for what's changed release to release, and the [Upgrading guide](https://mochams.github.io/walbox/migration/) if you're on a pre-1.0.0 version.
 
-## API Stability
-
-As of v1.0.0, the following are stable and won't break within the 1.0.x series:
-
-- `Walbox` (`build`, `build_with_pool`)
-- `Client`
-- `WalboxOptions`
-- `ConnectionPool`
-- `Transaction`
-- `ChangeEvent`, `ChangeKind`
-- `CheckpointHandle`
-- `Metrics`, `MetricsCallback`
-- `WalboxError` and its subclasses
-
-`walbox.abc` and `walbox.checkpoint` expose the underlying protocols and the PostgreSQL checkpoint store, for advanced use like manual `Client` construction or a custom `CheckpointStore`. These are lower-level and may change shape in a minor release.
-
-1.0.x releases can add fields or methods, but won't remove or change the meaning of anything listed above.
-
 **Development**: see [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup and [`LICENSE`](LICENSE) for terms.

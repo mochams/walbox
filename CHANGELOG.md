@@ -7,6 +7,8 @@ follows [Semantic Versioning](https://semver.org/) (pre-1.0 tags use the
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-01
+
 ### Added
 
 - `docs/migration.md`: an Upgrading guide covering every pre-1.0.0 version
