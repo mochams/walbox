@@ -170,6 +170,7 @@ addopts = [
 testpaths = ["tests"]
 markers = [
     "postgres: requires a real PostgreSQL instance, started via testcontainers (make test-integration)",
+    "pgbouncer: requires a real pgbouncer + PostgreSQL instance, started via testcontainers (make test-integration-pgbouncer)",
 ]
 log_cli = "false"
 log_cli_level = "ERROR"

@@ -35,3 +35,7 @@ PostgreSQL only. This is a deliberate scope decision, not a current limitation w
 ## Does walbox create my publication or table for me?
 
 No. You create the publication and any tables it covers; walbox only creates the replication slot, and reuses it if it already exists. See [What you need to create](production/setup.md#what-you-need-to-create).
+
+## Does walbox work with pgbouncer?
+
+Yes, on pgbouncer 1.23.0 or later, in `session` or `transaction` pool_mode. Older pgbouncer and `statement` pool_mode don't work, for either the replication connection or the checkpoint store. See [PgBouncer](production/setup.md#pgbouncer).

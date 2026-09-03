@@ -45,3 +45,17 @@ jobs:
       - run: uv sync --locked
 
       - run: make test-integration
+
+  pgbouncer-tests:
+    name: PgBouncer integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - run: make test-integration-pgbouncer

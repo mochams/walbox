@@ -127,21 +127,22 @@ There is currently no configurable limit on this assembly memory. If large trans
 2. **Avoid unnecessarily large payloads in outbox rows.** PostgreSQL's TOAST compression helps, but smaller rows are still better for walbox's memory usage.
 3. **Process rows one at a time in your handler**, without buffering the entire transaction before sending:
 
-   ```python
-   async def handle(tx: Transaction, checkpoint: CheckpointHandle) -> None:
-       # Good: process each row individually
-       for change in tx.changes:
-           if change.table != "public.outbox" or change.kind != ChangeKind.INSERT:
-               continue
+      ```python
+      async def handle(tx: Transaction, checkpoint: CheckpointHandle) -> None:
+          # Good: process each row individually
+          for change in tx.changes:
+              if change.table != "public.outbox" or change.kind != ChangeKind.INSERT:
+                  continue
 
-           # Send immediately, don't buffer in application
-           await broker.publish(change.new)
+              # Send immediately, don't buffer in application
+              await broker.publish(change.new)
 
-       # Checkpoint only after all rows are sent
-       await checkpoint.save(tx.commit_lsn)
-   ```
+          # Checkpoint only after all rows are sent
+          await checkpoint.save(tx.commit_lsn)
+      ```
 
-   This reduces your application's own memory use, though it doesn't reduce walbox's transaction-assembly memory.
+      This reduces your application's own memory use, though it doesn't reduce walbox's transaction-assembly memory.
+
 4. **Monitor process memory** for workloads that can produce large transactions, using OS-level tools or container memory limits.
 5. **Plan capacity for large transactions as a realistic scenario**, not an edge case (see [Setup & Deployment](setup.md#resource-sizing)).
 6. **Evaluate whether walbox fits your workload** if you regularly handle multi-gigabyte transactions. Extreme cases may need a different architecture.
