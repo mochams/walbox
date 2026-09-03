@@ -7,6 +7,16 @@ follows [Semantic Versioning](https://semver.org/) (pre-1.0 tags use the
 
 ## [Unreleased]
 
+### Added
+
+- Integration coverage for walbox behind a real pgbouncer
+  (`tests/integration/test_pgbouncer_replication.py`,
+  `test_pgbouncer_checkpoint.py`), covering `session` and `transaction`
+  pool_mode. Run via `make test-integration-pgbouncer`, and
+  `pgbouncer-tests` job in CI (`.github/workflows/qa.yml`).
+- `docs/faq.md` and `docs/production/setup.md`: pgbouncer support
+  documented.
+
 ## [1.0.0] - 2026-09-01
 
 ### Added

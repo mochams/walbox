@@ -252,6 +252,12 @@ Leave headroom. Don't fill `max_connections` to the brim.
 
 For finer-grained concurrency within a single consumer, use application-level sharding. See [`examples/concurrency.py`](https://github.com/mochams/walbox/blob/main/examples/concurrency.py) for a pattern that shards rows within one consumer using bounded queues per shard.
 
+## PgBouncer
+
+Needs pgbouncer 1.23.0 or later, in `session` or `transaction` pool_mode. `statement` pool_mode doesn't work: it can't run a block of statements, which both the replication stream and the checkpoint store need.
+
+You must ensure `max_prepared_statements` is not `0`; it defaults to `200` on a current pgbouncer.
+
 ## Troubleshooting
 
 **"role is not a member of the replication role"**: The connecting role doesn't have `REPLICATION` privilege. Run `ALTER ROLE consumer_role REPLICATION;` and reconnect.
